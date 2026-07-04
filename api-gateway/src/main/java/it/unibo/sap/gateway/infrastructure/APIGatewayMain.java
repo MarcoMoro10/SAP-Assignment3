@@ -28,6 +28,8 @@ public class APIGatewayMain {
         final String gatewayPublicHost = Env.get("GATEWAY_PUBLIC_HOST", DEFAULT_GATEWAY_PUBLIC_HOST);
         final int metricsPort = Env.getInt("GATEWAY_METRICS_PORT", DEFAULT_GATEWAY_METRICS_PORT);
 
+        final String eventChannelsLocation = Env.get("EV_CHANNELS_LOCATION", "broker:9092");
+
         final Vertx vertx = Vertx.vertx();
         final WebClient webClient = WebClient.create(vertx);
 
@@ -38,8 +40,8 @@ public class APIGatewayMain {
 
         final AccountServiceProxy accountServiceProxy =
                 new AccountServiceProxy(webClient, accountHost, accountPort, accountCircuitBreaker);
-        final DeliveryServiceProxy deliveryServiceProxy =
-                new DeliveryServiceProxy(webClient, deliveryHost, deliveryPort, fleetPort);
+        final DeliveryServiceProxy deliveryServiceProxy = new DeliveryServiceProxy(
+                vertx, webClient, deliveryHost, deliveryPort, fleetPort, eventChannelsLocation);
         final SessionRepository sessionRepository = new InMemorySessionRepository();
 
         final SessionService service = new SessionServiceImpl(
