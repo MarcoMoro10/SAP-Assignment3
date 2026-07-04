@@ -7,7 +7,6 @@ import io.vertx.core.WorkerExecutor;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
-import io.vertx.ext.web.handler.BodyHandler;
 import it.unibo.sap.common.hexagonal.InputAdapter;
 import it.unibo.sap.delivery.application.CreateDeliveryCommand;
 import it.unibo.sap.delivery.application.CreateDeliveryResult;
@@ -17,7 +16,6 @@ import it.unibo.sap.delivery.application.DeliveryExceptions.DeliveryNotFoundExce
 import it.unibo.sap.delivery.application.DeliveryExceptions.ValidationRejectedException;
 import it.unibo.sap.delivery.application.DeliveryService;
 import it.unibo.sap.delivery.application.TrackingHandle;
-import it.unibo.sap.delivery.domain.deliveries.DeliveryStatus;
 import it.unibo.sap.delivery.domain.deliveries.DeliveryTrackingView;
 import it.unibo.sap.delivery.domain.deliveries.EstimatedTimeRemaining;
 import it.unibo.sap.delivery.kafka.InputEventChannel;
@@ -39,6 +37,8 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
     private static final String CH_NEW_DELIVERY_CREATED = "new-delivery-created";
     private static final String CH_CANCEL_REQUESTS = "cancel-delivery-requests";
     private static final String CH_GET_DETAIL_REQUESTS = "get-delivery-detail-requests";
+    private static final String CH_TRACK_REQUESTS = "delivery-tracking-requests";
+    private static final String CH_STOP_TRACKING_REQUESTS = "stop-tracking-requests";
 
     private final DeliveryService deliveryService;
     private final int port;
@@ -56,6 +56,10 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
     private InputEventChannel createIn;
     private InputEventChannel cancelIn;
     private InputEventChannel getIn;
+    private InputEventChannel trackIn;
+    private InputEventChannel stopTrackingIn;
+
+    private final Map<String, InputEventChannel> trackingForwarders = new ConcurrentHashMap<>();
 
     public DeliveryServiceController(final DeliveryService deliveryService, final int port,
                                      final String eventChannelsLocation) {
@@ -74,20 +78,20 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
         createIn = new InputEventChannel(vertx, CH_CREATE_REQUESTS, eventChannelsLocation);
         cancelIn = new InputEventChannel(vertx, CH_CANCEL_REQUESTS, eventChannelsLocation);
         getIn = new InputEventChannel(vertx, CH_GET_DETAIL_REQUESTS, eventChannelsLocation);
+        trackIn = new InputEventChannel(vertx, CH_TRACK_REQUESTS, eventChannelsLocation);
+        stopTrackingIn = new InputEventChannel(vertx, CH_STOP_TRACKING_REQUESTS, eventChannelsLocation);
 
         final Router router = Router.router(vertx);
-        router.route("/api/v1/*").handler(BodyHandler.create());
         router.get("/api/v1/health").handler(this::handleHealth);
-        router.post("/api/v1/deliveries/:deliveryId/track").handler(this::handleTrack);
-
         final var server = vertx.createHttpServer();
-        server.webSocketHandler(this::handleTrackingSocket);
 
         final Future<Void> httpReady = server.requestHandler(router).listen(port).mapEmpty();
         final Future<Void> kafkaReady = Future.all(
                 createIn.init(this::onCreateRequest),
                 cancelIn.init(this::onCancelRequest),
-                getIn.init(this::onGetRequest)).mapEmpty();
+                getIn.init(this::onGetRequest),
+                trackIn.init(this::onTrackRequest),
+                stopTrackingIn.init(this::onStopTrackingRequest)).mapEmpty();
 
         Future.all(httpReady, kafkaReady)
                 .onSuccess(v -> {
@@ -103,14 +107,17 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
         if (commandExecutor != null) {
             commandExecutor.close();
         }
-        if (createIn != null) {
-            createIn.close();
-        }
-        if (cancelIn != null) {
-            cancelIn.close();
-        }
-        if (getIn != null) {
-            getIn.close();
+        closeQuietly(createIn);
+        closeQuietly(cancelIn);
+        closeQuietly(getIn);
+        closeQuietly(trackIn);
+        closeQuietly(stopTrackingIn);
+        trackingForwarders.values().forEach(this::closeQuietly);
+    }
+
+    private void closeQuietly(final InputEventChannel channel) {
+        if (channel != null) {
+            channel.close();
         }
     }
 
@@ -196,6 +203,55 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
                 });
     }
 
+    private void onTrackRequest(final JsonObject req) {
+        final String requestId = req.getString("requestId");
+        final String deliveryId = req.getString("deliveryId");
+        final String senderId = req.getString("senderId");
+        commandExecutor.<TrackingHandle>executeBlocking(
+                        () -> deliveryService.startTracking(deliveryId, senderId), true)
+                .onSuccess(handle -> setupForwarder(deliveryId).onComplete(ar ->
+                        out(dynamic("delivery-", deliveryId, "-tracking-requests-approved"))
+                                .postEvent(new JsonObject()
+                                        .put("requestId", requestId)
+                                        .put("deliveryId", deliveryId)
+                                        .put("trackingSessionId", handle.trackingSessionId()))))
+                .onFailure(e -> {
+                    final String errorType = e instanceof DeliveryNotFoundException ? "NOT_FOUND" : "INTERNAL";
+                    out(dynamic("delivery-", deliveryId, "-tracking-requests-rejected"))
+                            .postEvent(rejection(requestId, deliveryId, e.getMessage(), errorType));
+                });
+    }
+
+    private void onStopTrackingRequest(final JsonObject req) {
+        final String requestId = req.getString("requestId");
+        final String deliveryId = req.getString("deliveryId");
+        final InputEventChannel forwarder = trackingForwarders.remove(deliveryId);
+        if (forwarder == null) {
+            out(dynamic("stop-tracking-", deliveryId, "-requests-rejected"))
+                    .postEvent(rejection(requestId, deliveryId, "No active tracking session", "NOT_FOUND"));
+            return;
+        }
+        forwarder.close();
+        out(dynamic("delivery-tracking-", deliveryId, "-external-events"))
+                .postEvent(new JsonObject().put("event", "TRACKING_CLOSED").put("deliveryId", deliveryId));
+        out(dynamic("stop-tracking-", deliveryId, "-requests-approved"))
+                .postEvent(new JsonObject()
+                        .put("requestId", requestId)
+                        .put("deliveryId", deliveryId)
+                        .put("status", "STOPPED"));
+    }
+
+    private Future<Void> setupForwarder(final String deliveryId) {
+        if (trackingForwarders.containsKey(deliveryId)) {
+            return Future.succeededFuture();
+        }
+        final InputEventChannel internalIn = new InputEventChannel(
+                vertx, dynamic("delivery-tracking-", deliveryId, "-internal-events"), eventChannelsLocation);
+        trackingForwarders.put(deliveryId, internalIn);
+        final OutputEventChannel externalOut = out(dynamic("delivery-tracking-", deliveryId, "-external-events"));
+        return internalIn.init(externalOut::postEvent);
+    }
+
     private static String dynamic(final String prefix, final String id, final String suffix) {
         return prefix + id + suffix;
     }
@@ -223,63 +279,6 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
                 .end(new JsonObject().put("status", "UP").encode());
     }
 
-    private void handleTrack(final RoutingContext ctx) {
-        final String deliveryId = ctx.pathParam("deliveryId");
-        final JsonObject body = ctx.body().asJsonObject();
-        final String senderId = body == null ? null : body.getString("senderId");
-        try {
-            final TrackingHandle handle = deliveryService.startTracking(deliveryId, senderId);
-            final String wsUrl = "ws://localhost:" + port + "/api/v1/track/" + handle.trackingSessionId();
-            ctx.response().setStatusCode(201)
-                    .putHeader("Content-Type", "application/json")
-                    .end(new JsonObject()
-                            .put("trackingSessionId", handle.trackingSessionId())
-                            .put("deliveryId", handle.deliveryId())
-                            .put("webSocketUrl", wsUrl).encode());
-        } catch (final DeliveryNotFoundException e) {
-            error(ctx, 404, e.getMessage());
-        }
-    }
-
-    private void handleTrackingSocket(final io.vertx.core.http.ServerWebSocket webSocket) {
-        if (!webSocket.path().startsWith("/api/v1/track/")) {
-            webSocket.reject();
-            return;
-        }
-        webSocket.textMessageHandler(openMsg -> {
-            if (openMsg == null || openMsg.isBlank()) {
-                return;
-            }
-            final JsonObject obj;
-            try {
-                obj = new JsonObject(openMsg);
-            } catch (final RuntimeException e) {
-                webSocket.writeTextMessage(new JsonObject()
-                        .put("error", "Expected JSON {\"deliveryId\":\"...\"}").encode());
-                return;
-            }
-            final String deliveryId = obj.getString("deliveryId");
-            if (deliveryId == null || deliveryId.isBlank()) {
-                webSocket.writeTextMessage(new JsonObject()
-                        .put("error", "Missing deliveryId").encode());
-                return;
-            }
-            final String address = VertxTrackingSessionEventObserver.TRACKING_ADDRESS_PREFIX + deliveryId;
-            vertx.eventBus().consumer(address, msg -> {
-                final JsonObject update = (JsonObject) msg.body();
-                final String frame = update.encode();
-                if (isTerminalStatus(update.getString("status"))) {
-                    webSocket.writeTextMessage(frame, ar -> webSocket.close());
-                } else {
-                    webSocket.writeTextMessage(frame);
-                }
-            });
-        });
-    }
-
-    private static boolean isTerminalStatus(final String status) {
-        return DeliveryStatus.DELIVERED.name().equals(status);
-    }
 
     private CreateDeliveryCommand toCommand(final JsonObject body) {
         if (body == null) {
@@ -325,11 +324,5 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
                 .put("estimatedTimeRemainingSeconds", v.estimatedTimeRemainingSeconds())
                 .put("estimatedTimeRemainingFormatted",
                         EstimatedTimeRemaining.formatSeconds(v.estimatedTimeRemainingSeconds()));
-    }
-
-    private void error(final RoutingContext ctx, final int status, final String message) {
-        ctx.response().setStatusCode(status)
-                .putHeader("Content-Type", "application/json")
-                .end(new JsonObject().put("error", message).encode());
     }
 }

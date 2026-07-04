@@ -38,7 +38,7 @@ public class DeliveryServiceMain {
         final TrackingSessionRegistry trackingRegistry = new InMemoryTrackingSessionRegistry();
         final GeocodingPort geocoding = new GeocodingService();
         final TrackingSessionEventObserver trackingObserver =
-                new VertxTrackingSessionEventObserver(vertx.eventBus());
+                new KafkaTrackingSessionEventObserver(vertx, eventChannelsLocation);
         final DeliveryServiceEventObserver metricsObserver =
                 new PrometheusDeliveryServiceObserver(metricsPort);
 

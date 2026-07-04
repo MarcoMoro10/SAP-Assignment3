@@ -1,19 +1,24 @@
 package it.unibo.sap.delivery.infrastructure;
 
-import io.vertx.core.eventbus.EventBus;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import it.unibo.sap.common.hexagonal.OutputAdapter;
 import it.unibo.sap.delivery.application.TrackingSessionEventObserver;
 import it.unibo.sap.delivery.domain.deliveries.EstimatedTimeRemaining;
+import it.unibo.sap.delivery.kafka.OutputEventChannel;
 
-public class VertxTrackingSessionEventObserver implements TrackingSessionEventObserver, OutputAdapter {
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-    public static final String TRACKING_ADDRESS_PREFIX = "tracking.";
+public class KafkaTrackingSessionEventObserver implements TrackingSessionEventObserver, OutputAdapter {
 
-    private final EventBus eventBus;
+    private final Vertx vertx;
+    private final String address;
+    private final Map<String, OutputEventChannel> internalChannels = new ConcurrentHashMap<>();
 
-    public VertxTrackingSessionEventObserver(final EventBus eventBus) {
-        this.eventBus = eventBus;
+    public KafkaTrackingSessionEventObserver(final Vertx vertx, final String address) {
+        this.vertx = vertx;
+        this.address = address;
     }
 
     @Override
@@ -23,6 +28,7 @@ public class VertxTrackingSessionEventObserver implements TrackingSessionEventOb
                                    final double longitude,
                                    final long estimatedTimeRemainingSeconds) {
         final JsonObject update = new JsonObject()
+                .put("event", "TRACKING_UPDATE")
                 .put("deliveryId", deliveryId)
                 .put("status", status)
                 .put("position", new JsonObject()
@@ -31,6 +37,11 @@ public class VertxTrackingSessionEventObserver implements TrackingSessionEventOb
                 .put("estimatedTimeRemainingSeconds", estimatedTimeRemainingSeconds)
                 .put("estimatedTimeRemainingFormatted",
                         EstimatedTimeRemaining.formatSeconds(estimatedTimeRemainingSeconds));
-        eventBus.publish(TRACKING_ADDRESS_PREFIX + deliveryId, update);
+        internalChannel(deliveryId).postEvent(update);
+    }
+
+    private OutputEventChannel internalChannel(final String deliveryId) {
+        return internalChannels.computeIfAbsent(deliveryId,
+                id -> new OutputEventChannel(vertx, "delivery-tracking-" + id + "-internal-events", address));
     }
 }
