@@ -14,6 +14,7 @@ import java.io.UncheckedIOException;
 public class PrometheusControllerObserver implements ControllerObserver, OutputAdapter {
 
     private final Counter nTotalNumberOfRESTRequests;
+    private final Counter nSuccessfulRESTRequests;
     private final Counter totalRequestResponseTime;
     private final Gauge isAccountCircuitOpen;
     private final HTTPServer server;
@@ -27,6 +28,10 @@ public class PrometheusControllerObserver implements ControllerObserver, OutputA
         this.nTotalNumberOfRESTRequests = Counter.builder()
                 .name("rest_requests")
                 .help("Total number of REST requests received by the gateway")
+                .register(registry);
+        this.nSuccessfulRESTRequests = Counter.builder()
+                .name("successful_rest_requests")
+                .help("Total number of successful (status < 400) domain REST requests")
                 .register(registry);
         this.totalRequestResponseTime = Counter.builder()
                 .name("request_response_time_seconds")
@@ -48,6 +53,11 @@ public class PrometheusControllerObserver implements ControllerObserver, OutputA
     @Override
     public void notifyNewRESTRequest() {
         nTotalNumberOfRESTRequests.inc();
+    }
+
+    @Override
+    public void notifySuccessfulRESTRequest() {
+        nSuccessfulRESTRequests.inc();
     }
 
     @Override

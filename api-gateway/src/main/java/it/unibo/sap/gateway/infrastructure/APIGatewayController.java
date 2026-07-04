@@ -85,10 +85,23 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
     }
 
     private void observeRequest(final RoutingContext ctx) {
+        if (isHealthProbe(ctx.request().path())) {
+            ctx.next();
+            return;
+        }
         observer.notifyNewRESTRequest();
         final long startNanos = System.nanoTime();
-        ctx.addEndHandler(ar -> observer.recordResponseTime((System.nanoTime() - startNanos) / 1_000_000_000.0));
+        ctx.addEndHandler(ar -> {
+            observer.recordResponseTime((System.nanoTime() - startNanos) / 1_000_000_000.0);
+            if (ctx.response().getStatusCode() < 400) {
+                observer.notifySuccessfulRESTRequest();
+            }
+        });
         ctx.next();
+    }
+
+    private static boolean isHealthProbe(final String path) {
+        return path != null && path.startsWith("/api/v1/health");
     }
 
     private void handleLiveness(final RoutingContext ctx) {
