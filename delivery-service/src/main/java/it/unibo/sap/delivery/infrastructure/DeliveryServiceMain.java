@@ -21,12 +21,15 @@ public class DeliveryServiceMain {
     static final int DEFAULT_ADMIN_PORT = 9003;
     static final int DEFAULT_METRICS_PORT = 9400;
 
+    static final String DEFAULT_EV_CHANNELS_LOCATION = "broker:9092";
+
     static final double DRONE_SPEED_UNITS_PER_SECOND = 0.01;
 
     public static void main(final String[] args) {
         final int deliveryPort = Env.getInt("DELIVERY_PORT", DEFAULT_DELIVERY_SERVICE_PORT);
         final int adminPort = Env.getInt("FLEET_PORT", DEFAULT_ADMIN_PORT);
         final int metricsPort = Env.getInt("DELIVERY_METRICS_PORT", DEFAULT_METRICS_PORT);
+        final String eventChannelsLocation = Env.get("EV_CHANNELS_LOCATION", DEFAULT_EV_CHANNELS_LOCATION);
 
         final Vertx vertx = Vertx.vertx();
 
@@ -53,7 +56,7 @@ public class DeliveryServiceMain {
 
         FleetSeeder.seed(droneRepository);
 
-        vertx.deployVerticle(new DeliveryServiceController(deliveryService, deliveryPort));
+        vertx.deployVerticle(new DeliveryServiceController(deliveryService, deliveryPort, eventChannelsLocation));
         vertx.deployVerticle(new FleetMonitoringController(deliveryService, adminPort));
         vertx.deployVerticle(new VertxSchedulerVerticle(deliveryService));
     }
