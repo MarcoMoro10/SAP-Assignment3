@@ -3,8 +3,6 @@ package it.unibo.sap.gateway.infrastructure;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.ServerWebSocket;
-import io.vertx.core.http.WebSocketClient;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.WebClient;
 import it.unibo.sap.common.hexagonal.OutputAdapter;
@@ -35,7 +33,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     private static final long HEALTH_TIMEOUT_MS = 2000;
     private static final long ADMIN_TIMEOUT_MS = 10_000;
     private static final long REQUEST_TIMEOUT_SECONDS = 10;
-    private static final long CLIENT_CLOSE_GRACE_MS = 200;
 
     private final Vertx vertx;
     private final WebClient webClient;
@@ -48,6 +45,8 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     private final Map<String, Promise<JsonObject>> pending = new ConcurrentHashMap<>();
     private final Map<String, InputEventChannel> subscriptions = new ConcurrentHashMap<>();
     private final Map<String, OutputEventChannel> outChannels = new ConcurrentHashMap<>();
+    // Riconciliazione chiave: trackingSessionId (client/EventBus) -> deliveryId (Kafka).
+    private final Map<String, String> sessionToDelivery = new ConcurrentHashMap<>();
 
     public DeliveryServiceProxy(final Vertx vertx, final WebClient webClient, final String host,
                                 final int port, final int fleetPort, final String eventChannelsLocation) {
@@ -107,9 +106,15 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
                 dyn("delivery-", deliveryId, "-tracking-requests-approved"),
                 dyn("delivery-", deliveryId, "-tracking-requests-rejected"),
                 new JsonObject().put("deliveryId", deliveryId).put("senderId", senderId));
-        return isApproved(reply)
-                ? clean(reply).put("_statusCode", 201)
-                : rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
+        if (isApproved(reply)) {
+            final JsonObject body = clean(reply);
+            final String trackingSessionId = body.getString("trackingSessionId");
+            if (trackingSessionId != null) {
+                sessionToDelivery.put(trackingSessionId, deliveryId);
+            }
+            return body.put("_statusCode", 201);
+        }
+        return rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
     }
 
     /** Non nell'interfaccia/endpoint: sara' usato dal bridge WS (STEP 5). */
@@ -139,35 +144,20 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     }
 
     // ---- Bridge tracking Kafka -> EventBus (usato dal controller allo STEP 5) ----
-    public void createAnEventChannel(final Vertx vertx, final String trackingSessionId) {
-        // TODO(STEP 5): MISMATCH DI CHIAVE DA RICONCILIARE.
-        //   Lato delivery (STEP 3) gli eventi esterni sono prodotti sul canale
-        //   "delivery-tracking-{deliveryId}-external-events" (chiave = deliveryId),
-        //   mentre qui il canale e' costruito con {trackingSessionId}.
-        //   Allo STEP 5 va usata la STESSA chiave su entrambi i lati (deliveryId o
-        //   trackingSessionId): o il delivery produce su -{trackingSessionId}-, oppure
-        //   il gateway mappa trackingSessionId -> deliveryId e sottoscrive quel canale.
-        //   Finche' non riconciliato, il bridge non riceve eventi.
+    public InputEventChannel createAnEventChannel(final Vertx vertx, final String deliveryId,
+                                                  final String trackingSessionId) {
         final InputEventChannel channel = new InputEventChannel(
-                vertx, "delivery-tracking-" + trackingSessionId + "-external-events", address);
+                vertx, "delivery-tracking-" + deliveryId + "-external-events", address);
         channel.init(event -> vertx.eventBus().publish(trackingSessionId, event));
+        return channel;
     }
 
-    // ---- Relay WS A2: mantenuto per compilazione del controller; rimosso allo STEP 5 ----
-    public void openTrackingRelay(final Vertx vertx,
-                                  final WebSocketClient wsClient,
-                                  final ServerWebSocket clientSocket,
-                                  final String trackingSessionId,
-                                  final String firstFrame) {
-        wsClient.connect(port, host, "/api/v1/track/" + trackingSessionId)
-                .onSuccess(deliverySocket -> {
-                    deliverySocket.writeTextMessage(firstFrame);
-                    deliverySocket.textMessageHandler(clientSocket::writeTextMessage);
-                    clientSocket.textMessageHandler(deliverySocket::writeTextMessage);
-                    clientSocket.closeHandler(v -> deliverySocket.close());
-                    deliverySocket.closeHandler(v -> vertx.setTimer(CLIENT_CLOSE_GRACE_MS, id -> clientSocket.close()));
-                })
-                .onFailure(err -> clientSocket.close());
+    public Optional<String> deliveryIdFor(final String trackingSessionId) {
+        return Optional.ofNullable(sessionToDelivery.get(trackingSessionId));
+    }
+
+    public void forgetTrackingSession(final String trackingSessionId) {
+        sessionToDelivery.remove(trackingSessionId);
     }
 
     // ---- request/reply Kafka ----

@@ -3,8 +3,8 @@ package it.unibo.sap.gateway.infrastructure;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.eventbus.MessageConsumer;
 import io.vertx.core.http.ServerWebSocket;
-import io.vertx.core.http.WebSocketClient;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
@@ -15,7 +15,9 @@ import it.unibo.sap.gateway.application.ControllerObserver;
 import it.unibo.sap.gateway.application.SessionService;
 import it.unibo.sap.gateway.domain.Session;
 import it.unibo.sap.gateway.domain.SessionId;
+import it.unibo.sap.gateway.kafka.InputEventChannel;
 
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class APIGatewayController extends AbstractVerticle implements InputAdapter {
@@ -28,7 +30,6 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
     private final String publicHost;
     private final int port;
     private final ControllerObserver observer;
-    private WebSocketClient webSocketClient;
 
     public APIGatewayController(final SessionService sessionService,
                                 final AccountServiceProxy accountServiceProxy,
@@ -68,8 +69,6 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
         router.get("/api/v1/user-sessions/:sessionId/deliveries/:deliveryId").handler(this::handleGetDelivery);
         router.get("/api/v1/user-sessions/:sessionId/admin/fleet").handler(this::handleViewFleet);
         router.get("/api/v1/user-sessions/:sessionId/admin/scheduling").handler(this::handleViewScheduling);
-
-        this.webSocketClient = vertx.createWebSocketClient();
 
         final var server = vertx.createHttpServer();
         server.webSocketHandler(this::handleTrackingRelay);
@@ -128,10 +127,39 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
         final AtomicBoolean relayOpened = new AtomicBoolean(false);
         clientSocket.textMessageHandler(firstFrame -> {
             if (relayOpened.compareAndSet(false, true)) {
-                deliveryServiceProxy.openTrackingRelay(
-                        vertx, webSocketClient, clientSocket, trackingSessionId, firstFrame);
+                openTrackingBridge(clientSocket, trackingSessionId);
             }
         });
+    }
+
+    private void openTrackingBridge(final ServerWebSocket clientSocket, final String trackingSessionId) {
+        final Optional<String> deliveryId = deliveryServiceProxy.deliveryIdFor(trackingSessionId);
+        if (deliveryId.isEmpty()) {
+            clientSocket.writeTextMessage(
+                    new JsonObject().put("error", "Unknown tracking session").encode(),
+                    ar -> clientSocket.close());
+            return;
+        }
+        final InputEventChannel bridge =
+                deliveryServiceProxy.createAnEventChannel(vertx, deliveryId.get(), trackingSessionId);
+        final MessageConsumer<Object> consumer = vertx.eventBus().consumer(trackingSessionId, msg -> {
+            final JsonObject event = (JsonObject) msg.body();
+            if (isTerminalFrame(event)) {
+                clientSocket.writeTextMessage(event.encode(), ar -> clientSocket.close());
+            } else {
+                clientSocket.writeTextMessage(event.encode());
+            }
+        });
+        clientSocket.closeHandler(v -> {
+            consumer.unregister();
+            bridge.close();
+            deliveryServiceProxy.forgetTrackingSession(trackingSessionId);
+        });
+    }
+
+    private static boolean isTerminalFrame(final JsonObject event) {
+        return "DELIVERED".equals(event.getString("status"))
+                || "TRACKING_CLOSED".equals(event.getString("event"));
     }
 
     private void handleRegister(final RoutingContext ctx) {
