@@ -73,6 +73,19 @@
       <version>${jackson.version}</version>
     </dependency>
 
+    <!-- Kafka: comunicazione event-driven. kafka-clients pinnato a 4.1.1;
+         vertx-kafka-client allineato a Vert.x 4.5.13 (NON 5.x). -->
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-clients</artifactId>
+      <version>4.1.1</version>
+    </dependency>
+    <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-kafka-client</artifactId>
+      <version>${vertx.version}</version>
+    </dependency>
+
     <!-- Application Metrics (Prometheus) -->
     <dependency>
       <groupId>io.prometheus</groupId>
