@@ -1,36 +1,45 @@
 package it.unibo.sap.gateway.kafka;
 
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.StringSerializer;
+import io.vertx.kafka.client.producer.KafkaProducer;
+import io.vertx.kafka.client.producer.KafkaProducerRecord;
 
 import java.time.Instant;
-import java.util.Properties;
+import java.util.HashMap;
+import java.util.Map;
 
 public final class OutputEventChannel {
 
-    private final String topic;
+    private final String name;
     private final KafkaProducer<String, String> producer;
 
-    public OutputEventChannel(final String topic, final String bootstrapServers) {
-        this.topic = topic;
-        final Properties props = new Properties();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.ACKS_CONFIG, "1");
-        this.producer = new KafkaProducer<>(props);
+    public OutputEventChannel(final Vertx vertx, final String name, final String address) {
+        this.name = name;
+        final Map<String, String> config = new HashMap<>();
+        config.put("bootstrap.servers", address);
+        config.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+        config.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+        config.put("acks", "1");
+        this.producer = KafkaProducer.create(vertx, config);
     }
 
-    public void postEvent(final JsonObject event) {
-        final JsonObject payload = event.copy().put("timestamp", Instant.now().toString());
-        producer.send(new ProducerRecord<>(topic, payload.encode()));
+
+    public Future<Void> postEvent(final JsonObject ev) {
+        final JsonObject payload = ev.copy().put("timestamp", Instant.now().toString());
+        final KafkaProducerRecord<String, String> record =
+                KafkaProducerRecord.create(name, payload.encode());
+        final Promise<Void> promise = Promise.promise();
+        producer.send(record)
+                .onSuccess(metadata -> promise.complete())
+                .onFailure(promise::fail);
+        return promise.future();
     }
 
     public String name() {
-        return topic;
+        return name;
     }
 
     public void close() {
