@@ -1,6 +1,7 @@
 package it.unibo.sap.delivery.infrastructure.fleet;
 
 import it.unibo.sap.delivery.application.DroneEventHandler;
+import it.unibo.sap.delivery.domain.fleet.DroneTelemetrySink;
 
 public class DroneEventHandlerSink implements DroneTelemetrySink {
 

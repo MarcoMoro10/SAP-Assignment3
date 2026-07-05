@@ -6,10 +6,13 @@ import it.unibo.sap.delivery.application.fleet.FleetFeasibilityRequest;
 import it.unibo.sap.delivery.application.fleet.FleetPort;
 import it.unibo.sap.delivery.application.fleet.FleetReservationResult;
 import it.unibo.sap.delivery.application.fleet.FleetViews;
+import it.unibo.sap.delivery.domain.drone.agent.DroneAgent;
+import it.unibo.sap.delivery.domain.drone.env.DroneEnvironment;
 import it.unibo.sap.delivery.domain.fleet.Coordinates;
 import it.unibo.sap.delivery.domain.fleet.Drone;
 import it.unibo.sap.delivery.domain.fleet.DroneId;
 import it.unibo.sap.delivery.domain.fleet.DroneStatus;
+import it.unibo.sap.delivery.domain.fleet.DroneTelemetrySink;
 
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -26,7 +29,8 @@ public class FleetModule implements FleetPort, OutputAdapter {
     private DroneTelemetrySink telemetrySink;
     private final double droneSpeedUnitsPerSecond;
 
-    private final Map<String, DroneSimulator> simulators = new ConcurrentHashMap<>();
+    private final DroneEnvironment environment = new DroneEnvironment();
+    private final Map<String, DroneAgent> agents = new ConcurrentHashMap<>();
     private final Map<String, String> deliveryToDrone = new ConcurrentHashMap<>();
     private final Map<String, Coordinates> deliveryDestination = new ConcurrentHashMap<>();
 
@@ -34,6 +38,7 @@ public class FleetModule implements FleetPort, OutputAdapter {
                        final double droneSpeedUnitsPerSecond) {
         this.drones = drones;
         this.droneSpeedUnitsPerSecond = droneSpeedUnitsPerSecond;
+        this.environment.start();
     }
 
     public void setTelemetrySink(final DroneTelemetrySink telemetrySink) {
@@ -128,9 +133,11 @@ public class FleetModule implements FleetPort, OutputAdapter {
             drone.releaseReservation(deliveryId);
             drones.save(drone);
         });
-        final DroneSimulator sim = simulators.remove(deliveryId);
-        if (sim != null) {
-            sim.stop();
+
+        final DroneAgent agent = agents.remove(deliveryId);
+        if (agent != null) {
+            agent.stop();
+            environment.unregister(agent);
         }
         deliveryToDrone.remove(deliveryId);
         deliveryDestination.remove(deliveryId);
@@ -147,10 +154,11 @@ public class FleetModule implements FleetPort, OutputAdapter {
             final String deliveryId = drone.getAssignedDeliveryId();
             final Coordinates destination = deliveryDestination.get(deliveryId);
             if (deliveryId != null && destination != null) {
-                final DroneSimulator sim = new DroneSimulator(drone, deliveryId, destination,
+                final DroneAgent agent = new DroneAgent(environment, drone, deliveryId, destination,
                         telemetrySink, droneSpeedUnitsPerSecond * ARRIVAL_THRESHOLD_FACTOR);
-                simulators.put(deliveryId, sim);
-                sim.start();
+                agents.put(deliveryId, agent);
+                environment.register(agent);
+                agent.startDrone();
             }
         });
     }
@@ -167,7 +175,7 @@ public class FleetModule implements FleetPort, OutputAdapter {
                 drones.save(drone);
             });
         }
-        simulators.remove(deliveryId);
+        agents.remove(deliveryId);
         deliveryToDrone.remove(deliveryId);
         deliveryDestination.remove(deliveryId);
     }
