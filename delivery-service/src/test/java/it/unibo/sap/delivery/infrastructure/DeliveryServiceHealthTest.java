@@ -31,13 +31,14 @@ class DeliveryServiceHealthTest {
 
     private static Vertx vertx;
     private static WebClient webClient;
+    private static FleetModule fleetModule;
 
     @BeforeAll
     static void startService() throws Exception {
         KafkaTestSupport.assumeBrokerReachable();
         vertx = Vertx.vertx();
         final TrackingSessionRegistry trackingRegistry = new InMemoryTrackingSessionRegistry();
-        final FleetModule fleetModule = new FleetModule(new InMemoryDroneRepository(), 0.01);
+        fleetModule = new FleetModule(new InMemoryDroneRepository(), 0.01);
         final DeliveryService deliveryService = new DeliveryServiceImpl(
                 new InMemoryDeliveryRepository(), fleetModule, new FakeGeocodingPort(), trackingRegistry);
 
@@ -50,6 +51,9 @@ class DeliveryServiceHealthTest {
 
     @AfterAll
     static void stopService() throws Exception {
+        if (fleetModule != null) {
+            fleetModule.stop();
+        }
         if (vertx != null) {
             final CompletableFuture<Void> closed = new CompletableFuture<>();
             vertx.close().onComplete(ar -> closed.complete(null));

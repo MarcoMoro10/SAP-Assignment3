@@ -180,6 +180,15 @@ public class FleetModule implements FleetPort, OutputAdapter {
         deliveryDestination.remove(deliveryId);
     }
 
+    public void stop() {
+        agents.values().forEach(agent -> {
+            agent.stop();
+            environment.unregister(agent);
+        });
+        agents.clear();
+        environment.stop();
+    }
+
     @Override
     public List<FleetViews.FleetDroneView> fleetMonitoringView() {
         return drones.findAll().stream()

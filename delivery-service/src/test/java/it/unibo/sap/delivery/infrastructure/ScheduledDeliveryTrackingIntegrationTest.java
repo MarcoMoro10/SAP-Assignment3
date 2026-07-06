@@ -21,6 +21,7 @@ import it.unibo.sap.delivery.infrastructure.fleet.FleetSeeder;
 import it.unibo.sap.delivery.infrastructure.fleet.InMemoryDroneRepository;
 import it.unibo.sap.delivery.support.InMemoryDeliveryRepository;
 import it.unibo.sap.delivery.support.KafkaTestSupport;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
@@ -47,6 +48,15 @@ class ScheduledDeliveryTrackingIntegrationTest {
     private static final double DRONE_SPEED_UNITS_PER_SECOND = 0.01;
     private static final long SHORT_TICK_MILLIS = 150;
 
+    private FleetModule fleetModule;
+
+    @AfterEach
+    void stopFleet() {
+        if (fleetModule != null) {
+            fleetModule.stop();
+        }
+    }
+
     @Test
     @Timeout(value = 30, timeUnit = TimeUnit.SECONDS)
     void scheduledDeliveryStartedByTheTimerPushesMultipleInProgressFramesBeforeDelivered(final Vertx vertx,
@@ -60,7 +70,7 @@ class ScheduledDeliveryTrackingIntegrationTest {
                 new KafkaTrackingSessionEventObserver(vertx, KafkaTestSupport.brokerAddress());
 
         final InMemoryDroneRepository droneRepository = new InMemoryDroneRepository();
-        final FleetModule fleetModule = new FleetModule(droneRepository, DRONE_SPEED_UNITS_PER_SECOND);
+        fleetModule = new FleetModule(droneRepository, DRONE_SPEED_UNITS_PER_SECOND);
         final DeliveryService deliveryService = new DeliveryServiceImpl(
                 deliveryRepository, fleetModule, geocoding, trackingRegistry);
         final DroneEventHandler droneEventHandler = new DroneEventHandler(
