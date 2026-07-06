@@ -150,7 +150,7 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
 
         final InputEventChannel channel = new InputEventChannel(
                 vertx, "delivery-tracking-" + deliveryId + "-external-events", address,
-                INSTANCE_GROUP, "earliest");
+                INSTANCE_GROUP, "latest");
         channel.init(event -> vertx.eventBus().publish(trackingSessionId, event));
         return channel;
     }
