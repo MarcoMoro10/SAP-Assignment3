@@ -7,6 +7,8 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
 import it.unibo.sap.gateway.application.DeliveryService;
+import it.unibo.sap.gateway.support.FakeDeliveryKafka;
+import it.unibo.sap.gateway.support.KafkaTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -20,13 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Integration test of {@link DeliveryServiceProxy} against a stub HTTP server that mimics the
- * delivery-service. Verifies that the proxy translates calls into the right HTTP requests and maps
- * the responses back. The same stub port serves both the delivery and the admin/fleet endpoints.
+ * Integration test (Kafka) del {@link DeliveryServiceProxy} contro un finto delivery-service lato Kafka
+ * ({@link FakeDeliveryKafka}): verifica che il proxy traduca create/get/cancel in request/reply sui
+ * canali Kafka e mappi le risposte approved/rejected (errorType -> statusCode). L'admin (viewFleet)
+ * resta HTTP verso uno stub. Richiede un broker reale (skippato senza).
  */
 class DeliveryServiceProxyIntegrationTest {
 
-    private static final int STUB_PORT = 9402;
+    private static final int ADMIN_STUB_PORT = 9402;
     private static final String HOST = "localhost";
 
     private static Vertx vertx;
@@ -35,51 +38,30 @@ class DeliveryServiceProxyIntegrationTest {
 
     @BeforeAll
     static void startStub() {
+        KafkaTestSupport.assumeBrokerReachable();
         vertx = Vertx.vertx();
+
+        new FakeDeliveryKafka(vertx);
+
         final Router router = Router.router(vertx);
         router.route("/api/v1/*").handler(BodyHandler.create());
-
-        router.post("/api/v1/deliveries").handler(ctx -> {
-            final JsonObject body = ctx.body().asJsonObject();
-            ctx.response().setStatusCode(201).putHeader("Content-Type", "application/json")
-                    .end(new JsonObject()
-                            .put("deliveryId", "DLV-1")
-                            .put("status", "IN_PROGRESS")
-                            .put("assignedDroneId", "DRN-1")
-                            .put("echoWeight", body.getValue("weight"))
-                            .encode());
-        });
-
-        router.get("/api/v1/deliveries/:deliveryId").handler(ctx -> {
-            final String senderId = ctx.queryParams().get("senderId");
-            if ("user-1".equals(senderId)) {
-                ctx.response().setStatusCode(200).putHeader("Content-Type", "application/json")
-                        .end(new JsonObject()
-                                .put("deliveryId", ctx.pathParam("deliveryId"))
-                                .put("status", "IN_PROGRESS").encode());
-            } else {
-                ctx.response().setStatusCode(404)
-                        .end(new JsonObject().put("error", "Delivery not found").encode());
-            }
-        });
-
-        router.post("/api/v1/deliveries/:deliveryId/cancel").handler(ctx ->
-                ctx.response().setStatusCode(200).putHeader("Content-Type", "application/json")
-                        .end(new JsonObject()
-                                .put("deliveryId", ctx.pathParam("deliveryId"))
-                                .put("status", "CANCELLED").encode()));
-
         router.get("/api/v1/admin/fleet").handler(ctx ->
                 ctx.response().setStatusCode(200).putHeader("Content-Type", "application/json")
                         .end(new JsonArray().add(new JsonObject()
                                 .put("droneId", "DRN-1").put("status", "AVAILABLE")).encode()));
-
         final CountDownLatch latch = new CountDownLatch(1);
-        vertx.createHttpServer().requestHandler(router).listen(STUB_PORT).onComplete(ar -> latch.countDown());
+        vertx.createHttpServer().requestHandler(router).listen(ADMIN_STUB_PORT).onComplete(ar -> latch.countDown());
         await(latch);
 
         webClient = WebClient.create(vertx);
-        proxy = new DeliveryServiceProxy(webClient, HOST, STUB_PORT, STUB_PORT);
+        proxy = new DeliveryServiceProxy(
+                vertx, webClient, HOST, ADMIN_STUB_PORT, ADMIN_STUB_PORT, KafkaTestSupport.brokerAddress());
+
+       try {
+            Thread.sleep(5000);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @AfterAll
@@ -102,6 +84,14 @@ class DeliveryServiceProxyIntegrationTest {
     }
 
     @Test
+    void createDeliveryMapsAValidationRejectionTo422() {
+        final JsonObject result = proxy.createDelivery(new JsonObject().put("weight", 12.0).put("senderId", "user-1"));
+
+        assertEquals(422, result.getInteger("_statusCode"));
+        assertEquals("No drone can carry this package", result.getString("error"));
+    }
+
+    @Test
     void getDeliveryReturnsThePayloadForTheOwner() {
         final Optional<JsonObject> result = proxy.getDelivery("DLV-1", "user-1");
         assertTrue(result.isPresent());
@@ -109,7 +99,7 @@ class DeliveryServiceProxyIntegrationTest {
     }
 
     @Test
-    void getDeliveryReturnsEmptyWhenDownstreamReplies404() {
+    void getDeliveryReturnsEmptyWhenDownstreamRejectsNotFound() {
         final Optional<JsonObject> result = proxy.getDelivery("DLV-1", "intruder");
         assertFalse(result.isPresent());
     }

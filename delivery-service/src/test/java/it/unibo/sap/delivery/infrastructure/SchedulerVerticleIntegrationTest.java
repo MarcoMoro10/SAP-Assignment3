@@ -48,7 +48,7 @@ class SchedulerVerticleIntegrationTest {
         final TrackingSessionRegistry trackingRegistry = new InMemoryTrackingSessionRegistry();
         final GeocodingPort geocoding = new GeocodingService();
         final TrackingSessionEventObserver trackingObserver =
-                new VertxTrackingSessionEventObserver(vertx.eventBus());
+                new KafkaTrackingSessionEventObserver(vertx, it.unibo.sap.delivery.support.KafkaTestSupport.brokerAddress());
 
         final InMemoryDroneRepository droneRepository = new InMemoryDroneRepository();
         final FleetModule fleetModule = new FleetModule(droneRepository, DRONE_SPEED_UNITS_PER_SECOND);

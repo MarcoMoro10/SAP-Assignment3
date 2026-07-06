@@ -81,8 +81,9 @@ class GatewayRegistrationIntegrationTest {
         final WebClient gatewayClient = WebClient.create(vertx);
         final AccountServiceProxy accountProxy =
                 new AccountServiceProxy(gatewayClient, HOST, ACCOUNT_STUB_PORT);
-        final DeliveryServiceProxy deliveryProxy =
-                new DeliveryServiceProxy(gatewayClient, HOST, ACCOUNT_STUB_PORT, ACCOUNT_STUB_PORT);
+        final DeliveryServiceProxy deliveryProxy = new DeliveryServiceProxy(
+                vertx, gatewayClient, HOST, ACCOUNT_STUB_PORT, ACCOUNT_STUB_PORT,
+                it.unibo.sap.gateway.support.KafkaTestSupport.brokerAddress());
         final SessionService service = new SessionServiceImpl(
                 new FakeAccountService(), deliveryProxy, new InMemorySessionRepository());
         final var controller = new APIGatewayController(service, accountProxy, deliveryProxy, HOST, GATEWAY_PORT);

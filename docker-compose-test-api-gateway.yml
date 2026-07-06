@@ -1,0 +1,68 @@
+# Compose di TEST per l'api-gateway: broker Kafka reale + `mvn test` del modulo in un container
+# Maven. Gli integration test Kafka del gateway (DeliveryServiceProxyIntegrationTest, guardato da
+# assumeBrokerReachable) girano perche' broker:9092 e' raggiungibile. account-service e prometheus
+# sono avviati come nel compose principale (depends_on richiesto), anche se gli integration test del
+# gateway usano fake/stub in-process. Maven e' confinato al solo container di test (in produzione: fat-jar).
+#   Uso:  docker compose -f docker-compose-test-api-gateway.yml up --build --abort-on-container-exit
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    networks: [test_network]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: broker
+    networks: [test_network]
+    depends_on: [zookeeper]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server broker:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  account-service:
+    build:
+      context: ./account-service
+    image: account-service
+    networks: [test_network]
+
+  prometheus:
+    image: prom/prometheus
+    networks: [test_network]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  api-gateway-test:
+    image: maven:3.9-eclipse-temurin-25
+    working_dir: /project
+    networks: [test_network]
+    depends_on:
+      account-service:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    environment:
+      - EV_CHANNELS_LOCATION=broker:9092
+    volumes:
+      - ./api-gateway:/project
+      - maven-repo:/root/.m2
+    command: ["mvn", "clean", "test"]
+
+networks:
+  test_network:
+    driver: bridge
+
+volumes:
+  maven-repo:

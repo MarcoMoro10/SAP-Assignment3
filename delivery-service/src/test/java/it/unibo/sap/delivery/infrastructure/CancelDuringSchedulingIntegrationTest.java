@@ -71,8 +71,9 @@ class CancelDuringSchedulingIntegrationTest {
         final InMemoryDeliveryRepository deliveryRepository = new InMemoryDeliveryRepository();
         final TrackingSessionRegistry trackingRegistry = new InMemoryTrackingSessionRegistry();
         final GeocodingPort geocoding = new GeocodingService();
+        // Nessuna sessione di tracking: observer lazy (Kafka), nessun broker richiesto.
         final TrackingSessionEventObserver trackingObserver =
-                new VertxTrackingSessionEventObserver(vertx.eventBus());
+                new KafkaTrackingSessionEventObserver(vertx, it.unibo.sap.delivery.support.KafkaTestSupport.brokerAddress());
         final InMemoryDroneRepository droneRepository = new InMemoryDroneRepository();
         final FleetModule fleetModule = new FleetModule(droneRepository, DRONE_SPEED_UNITS_PER_SECOND);
         final DeliveryService deliveryService = new DeliveryServiceImpl(
@@ -108,7 +109,6 @@ class CancelDuringSchedulingIntegrationTest {
                     }, true).onComplete(ar ->
                             cancelOutcome.set(ar.succeeded() ? ar.result() : "ERROR")));
 
-                    // Poll until both the cancel has completed and the delivery has settled.
                     vertx.setPeriodic(20, pollId -> {
                         final String outcome = cancelOutcome.get();
                         if (outcome == null) {

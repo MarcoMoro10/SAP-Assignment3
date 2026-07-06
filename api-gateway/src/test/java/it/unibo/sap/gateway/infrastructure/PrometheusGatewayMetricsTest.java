@@ -45,8 +45,9 @@ class PrometheusGatewayMetricsTest {
         observer = new PrometheusControllerObserver(new PrometheusRegistry(), GW_METRICS_PORT);
         final AccountServiceProxy accountProxy =
                 new AccountServiceProxy(WebClient.create(vertx), HOST, DEAD_PORT);
-        final DeliveryServiceProxy deliveryProxy =
-                new DeliveryServiceProxy(WebClient.create(vertx), HOST, DEAD_PORT, DEAD_PORT);
+        final DeliveryServiceProxy deliveryProxy = new DeliveryServiceProxy(
+                vertx, WebClient.create(vertx), HOST, DEAD_PORT, DEAD_PORT,
+                it.unibo.sap.gateway.support.KafkaTestSupport.brokerAddress());
         final SessionService service = new SessionServiceImpl(
                 new FakeAccountService(), deliveryProxy, new InMemorySessionRepository());
         final var controller = new APIGatewayController(
@@ -74,9 +75,14 @@ class PrometheusGatewayMetricsTest {
     void aRestRequestIncrementsTheRequestCounter() throws Exception {
         final double before = metric("rest_requests");
 
+        // Un endpoint di DOMINIO (login): allo STEP 7 le health probe (/api/v1/health*) sono escluse
+        // dagli SLI, quindi non incrementano rest_requests. Il login con FakeAccountService fallisce
+        // (401) ma resta una richiesta di dominio conteggiata nel totale.
         final CompletableFuture<Integer> done = new CompletableFuture<>();
-        webClient.get(GW_PORT, HOST, "/api/v1/health")
-                .send(ar -> done.complete(ar.succeeded() ? ar.result().statusCode() : -1));
+        webClient.post(GW_PORT, HOST, "/api/v1/login")
+                .sendJsonObject(new io.vertx.core.json.JsonObject()
+                                .put("username", "nobody").put("password", "x"),
+                        ar -> done.complete(ar.succeeded() ? ar.result().statusCode() : -1));
         done.get(15, TimeUnit.SECONDS);
 
         final double after = metric("rest_requests");

@@ -41,8 +41,9 @@ class AdminRoleAuthorizationIntegrationTest {
         final WebClient gatewayClient = WebClient.create(vertx);
         final AccountServiceProxy accountProxy =
                 new AccountServiceProxy(gatewayClient, HOST, UNUSED_DOWNSTREAM_PORT);
-        final DeliveryServiceProxy deliveryProxy =
-                new DeliveryServiceProxy(gatewayClient, HOST, UNUSED_DOWNSTREAM_PORT, UNUSED_DOWNSTREAM_PORT);
+        final DeliveryServiceProxy deliveryProxy = new DeliveryServiceProxy(
+                vertx, gatewayClient, HOST, UNUSED_DOWNSTREAM_PORT, UNUSED_DOWNSTREAM_PORT,
+                it.unibo.sap.gateway.support.KafkaTestSupport.brokerAddress());
 
         delivery = new FakeDeliveryService();
         final FakeAccountService account = new FakeAccountService().withSuccessfulLogin("acc-admin", "ADMIN");

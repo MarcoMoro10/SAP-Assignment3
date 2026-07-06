@@ -17,21 +17,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * QA scenario — THROUGHPUT (SLI-2). Manda un carico di richieste di DOMINIO (login) al gateway, ognuna
- * su un proprio virtual thread, e misura il throughput come DELTA di {@code rest_requests} diviso la
- * finestra temporale del carico. Deve superare i 40 req/s (SLO-2). Le probe di health sono escluse da
- * {@code rest_requests} (STEP 7), quindi il carico deve colpire un endpoint di dominio (non /health/live).
+ * QA scenario — AVAILABILITY (SLI-1). Availability = successful_rest_requests / rest_requests (SLO-1: > 99%).
+ * Lancia un batch di richieste di DOMINIO che hanno SUCCESSO end-to-end (login valido -> 200) e verifica
+ * il rapporto sul DELTA prodotto da questo carico (i contatori del gateway sono cumulativi dall'avvio, e
+ * altri test possono aver introdotto 4xx: si misura la finestra). Le probe di health sono escluse dagli
+ * SLI (STEP 7), quindi non falsano il rapporto.
  */
-class PerformanceTest {
+class AvailabilityTest {
 
-    private static final int REQUESTS = 2000;
-    private static final int WARMUP = 500;
-    private static final double MIN_THROUGHPUT_REQ_PER_SEC = 40.0;
+    private static final int REQUESTS = 300;
     private static final int MAX_IN_FLIGHT = 64;
+    private static final double MIN_AVAILABILITY = 0.99;
 
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .build();
+    private static final HttpClient HTTP = HttpClient.newHttpClient();
 
     private static HttpRequest loginRequest() {
         final String body = "{\"username\":\"" + Setup.ADMIN_USERNAME
@@ -50,32 +48,29 @@ class PerformanceTest {
     }
 
     @Test
-    void throughputStaysAboveTheServiceLevelObjective() throws Exception {
-        runLoad(WARMUP);
-
+    void availabilityStaysAboveTheServiceLevelObjective() throws Exception {
+        final double successBefore = Setup.gatewayMetric("successful_rest_requests");
         final double requestsBefore = Setup.gatewayMetric("rest_requests");
-        final long startNanos = System.nanoTime();
 
-        final int ok = runLoad(REQUESTS);
+        final int ok = runSuccessfulLoad(REQUESTS);
+        assertThat(ok).as("all %d domain requests should succeed end-to-end", REQUESTS).isEqualTo(REQUESTS);
 
-        final long elapsedNanos = System.nanoTime() - startNanos;
+        final double successDelta = Setup.gatewayMetric("successful_rest_requests") - successBefore;
         final double requestsDelta = Setup.gatewayMetric("rest_requests") - requestsBefore;
-        final double elapsedSeconds = elapsedNanos / 1_000_000_000.0;
-        final double throughput = requestsDelta / elapsedSeconds;
+        final double availability = successDelta / requestsDelta;
 
-        System.out.printf("[e2e] throughput: %.1f req/s (%d domain requests in %.2fs, gateway counted %.0f)%n",
-                throughput, REQUESTS, elapsedSeconds, requestsDelta);
+        System.out.printf("[e2e] availability: %.4f (%.0f successful / %.0f total in the window)%n",
+                availability, successDelta, requestsDelta);
 
-        assertThat(ok).as("all %d domain requests should complete", REQUESTS).isEqualTo(REQUESTS);
         assertThat(requestsDelta)
-                .as("the gateway must have counted at least the %d issued domain requests", REQUESTS)
+                .as("the gateway must have counted the issued domain requests")
                 .isGreaterThanOrEqualTo(REQUESTS);
-        assertThat(throughput)
-                .as("throughput must stay above %.0f req/s (SLO-2)", MIN_THROUGHPUT_REQ_PER_SEC)
-                .isGreaterThanOrEqualTo(MIN_THROUGHPUT_REQ_PER_SEC);
+        assertThat(availability)
+                .as("availability must stay above %.0f%% (SLO-1)", MIN_AVAILABILITY * 100)
+                .isGreaterThan(MIN_AVAILABILITY);
     }
 
-    private static int runLoad(final int count) throws Exception {
+    private static int runSuccessfulLoad(final int count) throws Exception {
         final AtomicInteger ok = new AtomicInteger(0);
         final Semaphore inFlight = new Semaphore(MAX_IN_FLIGHT);
         try (ExecutorService vthreads = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -84,7 +79,7 @@ class PerformanceTest {
                 futures.add(vthreads.submit(() -> {
                     inFlight.acquire();
                     try {
-                        if (sendOnce()) {
+                        if (loginOnce()) {
                             ok.incrementAndGet();
                         }
                     } finally {
@@ -100,7 +95,7 @@ class PerformanceTest {
         return ok.get();
     }
 
-    private static boolean sendOnce() throws Exception {
+    private static boolean loginOnce() throws Exception {
         try {
             return HTTP.send(loginRequest(), HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
         } catch (final java.io.IOException transientError) {

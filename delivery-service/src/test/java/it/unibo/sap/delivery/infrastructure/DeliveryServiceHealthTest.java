@@ -10,6 +10,7 @@ import it.unibo.sap.delivery.infrastructure.fleet.FleetModule;
 import it.unibo.sap.delivery.infrastructure.fleet.InMemoryDroneRepository;
 import it.unibo.sap.delivery.support.FakeGeocodingPort;
 import it.unibo.sap.delivery.support.InMemoryDeliveryRepository;
+import it.unibo.sap.delivery.support.KafkaTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ class DeliveryServiceHealthTest {
 
     @BeforeAll
     static void startService() throws Exception {
+        KafkaTestSupport.assumeBrokerReachable();
         vertx = Vertx.vertx();
         final TrackingSessionRegistry trackingRegistry = new InMemoryTrackingSessionRegistry();
         final FleetModule fleetModule = new FleetModule(new InMemoryDroneRepository(), 0.01);
@@ -40,7 +42,7 @@ class DeliveryServiceHealthTest {
                 new InMemoryDeliveryRepository(), fleetModule, new FakeGeocodingPort(), trackingRegistry);
 
         final CompletableFuture<Void> deployed = new CompletableFuture<>();
-        vertx.deployVerticle(new DeliveryServiceController(deliveryService, PORT))
+        vertx.deployVerticle(new DeliveryServiceController(deliveryService, PORT, KafkaTestSupport.brokerAddress()))
                 .onComplete(ar -> deployed.complete(null));
         deployed.get(15, TimeUnit.SECONDS);
         webClient = WebClient.create(vertx);
