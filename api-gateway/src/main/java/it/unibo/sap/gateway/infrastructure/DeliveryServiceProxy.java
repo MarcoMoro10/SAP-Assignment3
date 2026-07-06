@@ -33,6 +33,7 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     private static final long HEALTH_TIMEOUT_MS = 2000;
     private static final long ADMIN_TIMEOUT_MS = 10_000;
     private static final long REQUEST_TIMEOUT_SECONDS = 10;
+    private static final String INSTANCE_GROUP = "api-gateway-" + UUID.randomUUID();
 
     private final Vertx vertx;
     private final WebClient webClient;
@@ -146,8 +147,10 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     // ---- Bridge tracking Kafka -> EventBus (usato dal controller allo STEP 5) ----
     public InputEventChannel createAnEventChannel(final Vertx vertx, final String deliveryId,
                                                   final String trackingSessionId) {
+
         final InputEventChannel channel = new InputEventChannel(
-                vertx, "delivery-tracking-" + deliveryId + "-external-events", address);
+                vertx, "delivery-tracking-" + deliveryId + "-external-events", address,
+                INSTANCE_GROUP, "earliest");
         channel.init(event -> vertx.eventBus().publish(trackingSessionId, event));
         return channel;
     }
@@ -191,7 +194,9 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         if (subscriptions.containsKey(channel)) {
             return Future.succeededFuture();
         }
-        final InputEventChannel in = new InputEventChannel(vertx, channel, address);
+
+        final InputEventChannel in = new InputEventChannel(vertx, channel, address,
+                INSTANCE_GROUP, "earliest");
         subscriptions.put(channel, in);
         return in.init(approved ? this::completeApproved : this::completeRejected);
     }
