@@ -21,7 +21,7 @@ import java.util.concurrent.TimeoutException;
 
 public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
 
-    // Canali statici di input (comandi di dominio)
+    // Canali statici di input
     private static final String CH_CREATE_REQUESTS = "create-delivery-requests";
     private static final String CH_CREATE_APPROVED = "create-delivery-requests-approved";
     private static final String CH_CREATE_REJECTED = "create-delivery-requests-rejected";
@@ -38,9 +38,9 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     private final Vertx vertx;
     private final WebClient webClient;
     private final String host;
-    private final int port;       // delivery HTTP (health) 9002
-    private final int fleetPort;  // admin HTTP 9003
-    private final String address; // broker Kafka
+    private final int port;
+    private final int fleetPort;
+    private final String address;
 
     // Request/reply: requestId -> Promise; sottoscrizioni e producer riusati per canale.
     private final Map<String, Promise<JsonObject>> pending = new ConcurrentHashMap<>();
@@ -59,7 +59,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         this.address = eventChannelsLocation;
     }
 
-    // ---- Health del delivery (HTTP, invariato, SENZA circuit breaker) ----
     public Future<Boolean> pingHealth() {
         return webClient.get(port, host, "/api/v1/health")
                 .timeout(HEALTH_TIMEOUT_MS).send()
@@ -67,7 +66,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
                 .otherwise(false);
     }
 
-    // ---- Comandi di dominio via Kafka ----
     @Override
     public JsonObject createDelivery(final JsonObject request) {
         final JsonObject reply = requestReply(CH_CREATE_REQUESTS, CH_CREATE_APPROVED, CH_CREATE_REJECTED,
@@ -118,7 +116,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         return rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
     }
 
-    /** Non nell'interfaccia/endpoint: sara' usato dal bridge WS (STEP 5). */
     public JsonObject stopTracking(final String deliveryId, final String senderId) {
         final JsonObject reply = requestReply(CH_STOP_TRACKING_REQUESTS,
                 dyn("stop-tracking-", deliveryId, "-requests-approved"),
@@ -129,7 +126,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
                 : rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
     }
 
-    // ---- Admin via HTTP verso la porta 9003 (INVARIATO) ----
     @Override
     public JsonObject viewFleet() {
         return httpGetArray(fleetPort, "/api/v1/admin/fleet", "fleet");
@@ -144,7 +140,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         return httpGetArray(fleetPort, path, "scheduling");
     }
 
-    // ---- Bridge tracking Kafka -> EventBus (usato dal controller allo STEP 5) ----
     public InputEventChannel createAnEventChannel(final Vertx vertx, final String deliveryId,
                                                   final String trackingSessionId) {
 
@@ -163,14 +158,12 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         sessionToDelivery.remove(trackingSessionId);
     }
 
-    // ---- request/reply Kafka ----
     private JsonObject requestReply(final String inputChannel, final String approvedChannel,
                                     final String rejectedChannel, final JsonObject payload) {
         final String requestId = UUID.randomUUID().toString();
         payload.put("requestId", requestId);
         final Promise<JsonObject> promise = Promise.promise();
         pending.put(requestId, promise);
-        // Sottoscrivi le risposte PRIMA di postare (earliest copre eventuali race sul rebalance).
         Future.all(ensureSubscribed(approvedChannel, true), ensureSubscribed(rejectedChannel, false))
                 .onComplete(ar -> out(inputChannel).postEvent(payload));
         try {
@@ -220,7 +213,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         return outChannels.computeIfAbsent(channel, c -> new OutputEventChannel(vertx, c, address));
     }
 
-    // ---- Admin HTTP helper ----
     private JsonObject httpGetArray(final int p, final String path, final String key) {
         final CompletableFuture<JsonObject> future = new CompletableFuture<>();
         webClient.get(p, host, path).timeout(ADMIN_TIMEOUT_MS).send(ar -> {
@@ -240,7 +232,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         }
     }
 
-    // ---- Helpers ----
     private static boolean isApproved(final JsonObject reply) {
         return "approved".equals(reply.getString("__outcome"));
     }
