@@ -115,7 +115,8 @@ class AccountServiceCircuitBreakerTest {
         serviceUp = true;
         final boolean reclosed = pollUntil(() -> {
             proxy.login("user", "pwd");
-            return !breaker.isOpen() && metric("account_circuit_open") == 0.0;
+            return breaker.state() == CircuitBreaker.State.CLOSED
+                    && metric("account_circuit_open") == 0.0;
         }, 5_000);
 
         assertTrue(reclosed, "the circuit must re-close once the service is healthy again");
