@@ -42,11 +42,11 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     private final int fleetPort;
     private final String address;
 
-    // Request/reply: requestId -> Promise; sottoscrizioni e producer riusati per canale.
+    // Request/reply: requestId -> Promise
     private final Map<String, Promise<JsonObject>> pending = new ConcurrentHashMap<>();
     private final Map<String, InputEventChannel> subscriptions = new ConcurrentHashMap<>();
     private final Map<String, OutputEventChannel> outChannels = new ConcurrentHashMap<>();
-    // Riconciliazione chiave: trackingSessionId (client/EventBus) -> deliveryId (Kafka).
+    // TrackingSessionId (client/EventBus) -> deliveryId (Kafka).
     private final Map<String, String> sessionToDelivery = new ConcurrentHashMap<>();
 
     public DeliveryServiceProxy(final Vertx vertx, final WebClient webClient, final String host,

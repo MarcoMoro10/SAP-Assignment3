@@ -1,15 +1,33 @@
 # Quality Attribute Scenarios
 
-**Quality attribute scenario**: Responsiveness
+Both service-level scenarios are measured by the api-gateway through Prometheus counters exposed on
+port 9401. Health probes (`/api/v1/health`, `/api/v1/health/live`) are excluded from both SLIs via an
+early return in `observeRequest`, so the indicators count domain requests only (domain-driven
+definition). A request is counted as successful when its final status code is `< 400`.
 
-**Feature**: Small average response time in case of overload
 
-_when_ initiate 1000 concurrent requests \
-_caused by_ 1000 users \
+**Quality attribute scenario**: Throughput (SLO-2 / SLI-2)
+
+**Feature**: Sustained request rate under load
+
+_when_ a batch of 2000 domain requests is issued to the gateway \
+_caused by_ concurrent clients \
 _occur in_ the system \
 _operating in_ normal operation \
-_then_ the system processes all requests \
-_so that_ the average response time is < 100 milliseconds
+_then_ the gateway processes all of them and exposes the delta of `rest_requests` over the load window \
+_so that_ the measured throughput (SLI-2 = requests processed per second) stays above 40 req/s (SLO-2)
+
+
+**Quality attribute scenario**: Availability (SLO-1 / SLI-1)
+
+**Feature**: High rate of successful requests over time
+
+_when_ a batch of domain requests is issued to the gateway \
+_caused by_ clients performing valid operations \
+_occur in_ the system \
+_operating in_ normal operation \
+_then_ the gateway records `successful_rest_requests` (final status `< 400`) over `rest_requests` \
+_so that_ the measured availability (SLI-1 = successful / total requests) stays above 99% over 30 days (SLO-1)
 
 
 **Quality attribute scenario**: Handling partial failures

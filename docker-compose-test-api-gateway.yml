@@ -1,7 +1,6 @@
 # Compose di TEST per l'api-gateway: broker Kafka reale + `mvn test` del modulo in un container
-# Maven. Gli integration test Kafka del gateway (DeliveryServiceProxyIntegrationTest, guardato da
-# assumeBrokerReachable) girano perche' broker:9092 e' raggiungibile. account-service e prometheus
-# sono avviati come nel compose principale (depends_on richiesto), anche se gli integration test del
+# Maven. Gli integration test Kafka del gateway girano perche' broker:9092 e' raggiungibile. account-service e prometheus
+# sono avviati come nel compose principale, anche se gli integration test del
 # gateway usano fake/stub in-process. Maven e' confinato al solo container di test (in produzione: fat-jar).
 #   Uso:  docker compose -f docker-compose-test-api-gateway.yml up --build --abort-on-container-exit
 services:

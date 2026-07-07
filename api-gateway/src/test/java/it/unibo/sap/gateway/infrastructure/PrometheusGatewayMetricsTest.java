@@ -75,9 +75,6 @@ class PrometheusGatewayMetricsTest {
     void aRestRequestIncrementsTheRequestCounter() throws Exception {
         final double before = metric("rest_requests");
 
-        // Un endpoint di DOMINIO (login): allo STEP 7 le health probe (/api/v1/health*) sono escluse
-        // dagli SLI, quindi non incrementano rest_requests. Il login con FakeAccountService fallisce
-        // (401) ma resta una richiesta di dominio conteggiata nel totale.
         final CompletableFuture<Integer> done = new CompletableFuture<>();
         webClient.post(GW_PORT, HOST, "/api/v1/login")
                 .sendJsonObject(new io.vertx.core.json.JsonObject()

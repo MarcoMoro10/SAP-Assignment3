@@ -1,7 +1,6 @@
 # Compose di TEST per il delivery-service: avvia un broker Kafka reale e lancia `mvn test` del
 # modulo in un container Maven (i fat-jar restano la via di avvio in PRODUZIONE; qui Maven e'
-# confinato al solo container di test). Gli integration test Kafka (guardati da assumeBrokerReachable)
-# girano perche' broker:9092 e' raggiungibile nella rete.
+# confinato al solo container di test).
 #   Uso:  docker compose -f docker-compose-test-delivery.yml up --build --abort-on-container-exit
 services:
   zookeeper:
