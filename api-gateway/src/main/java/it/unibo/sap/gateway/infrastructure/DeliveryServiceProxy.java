@@ -140,7 +140,7 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         return httpGetArray(fleetPort, path, "scheduling");
     }
 
-    public InputEventChannel createAnEventChannel(final Vertx vertx, final String deliveryId,
+    public InputEventChannel createAnEventChannel(final String deliveryId,
                                                   final String trackingSessionId) {
 
         final InputEventChannel channel = new InputEventChannel(

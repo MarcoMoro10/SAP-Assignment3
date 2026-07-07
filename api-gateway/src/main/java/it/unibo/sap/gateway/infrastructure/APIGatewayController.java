@@ -154,7 +154,7 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
             return;
         }
         final InputEventChannel bridge =
-                deliveryServiceProxy.createAnEventChannel(vertx, deliveryId.get(), trackingSessionId);
+                deliveryServiceProxy.createAnEventChannel(deliveryId.get(), trackingSessionId);
         final MessageConsumer<Object> consumer = vertx.eventBus().consumer(trackingSessionId, msg -> {
             final JsonObject event = (JsonObject) msg.body();
             if (isTerminalFrame(event)) {

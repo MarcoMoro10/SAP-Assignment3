@@ -15,8 +15,6 @@ import java.util.List;
 
 public class FleetMonitoringController extends AbstractVerticle implements InputAdapter {
 
-    public static final int DEFAULT_PORT = 8083;
-
     private final DeliveryService deliveryService;
     private final int port;
 
