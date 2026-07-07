@@ -71,7 +71,6 @@ class CancelDuringSchedulingIntegrationTest {
         final InMemoryDeliveryRepository deliveryRepository = new InMemoryDeliveryRepository();
         final TrackingSessionRegistry trackingRegistry = new InMemoryTrackingSessionRegistry();
         final GeocodingPort geocoding = new GeocodingService();
-        // Nessuna sessione di tracking: observer lazy (Kafka), nessun broker richiesto.
         final TrackingSessionEventObserver trackingObserver =
                 new KafkaTrackingSessionEventObserver(vertx, it.unibo.sap.delivery.support.KafkaTestSupport.brokerAddress());
         final InMemoryDroneRepository droneRepository = new InMemoryDroneRepository();

@@ -3,13 +3,10 @@ package it.unibo.sap.delivery.support;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
-import io.vertx.kafka.client.producer.KafkaProducer;
-import io.vertx.kafka.client.producer.KafkaProducerRecord;
 import org.junit.jupiter.api.Assumptions;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -17,12 +14,6 @@ import java.util.function.Consumer;
 
 /**
  * Helper per i test di integrazione che richiedono un broker Kafka reale.
- * <ul>
- *   <li>{@link #assumeBrokerReachable()} salta (JUnit assumption) il test se il broker non e'
- *       raggiungibile: cosi' {@code mvn test} locale resta verde e i test girano solo nel
- *       compose di test (dove {@code EV_CHANNELS_LOCATION=broker:9092} e' raggiungibile).</li>
- *   <li>producer/consumer reattivi di Vert.x con group.id univoco per l'osservazione.</li>
- * </ul>
  */
 public final class KafkaTestSupport {
 
@@ -44,21 +35,6 @@ public final class KafkaTestSupport {
         } catch (final Exception unreachable) {
             Assumptions.abort("Kafka broker not reachable at " + addr + " — skipping Kafka integration test");
         }
-    }
-
-    public static KafkaProducer<String, String> producer(final Vertx vertx) {
-        final Map<String, String> cfg = new HashMap<>();
-        cfg.put("bootstrap.servers", brokerAddress());
-        cfg.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-        cfg.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-        cfg.put("acks", "1");
-        return KafkaProducer.create(vertx, cfg);
-    }
-
-    public static void post(final KafkaProducer<String, String> producer, final String topic,
-                            final JsonObject payload) {
-        producer.send(KafkaProducerRecord.create(topic,
-                payload.copy().put("timestamp", Instant.now().toString()).encode()));
     }
 
     public static KafkaConsumer<String, String> consumer(final Vertx vertx, final String topic,

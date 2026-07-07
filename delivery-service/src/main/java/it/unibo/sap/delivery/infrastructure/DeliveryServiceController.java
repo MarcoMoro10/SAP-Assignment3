@@ -30,7 +30,7 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
 
     public static final String DOMAIN_COMMAND_EXECUTOR = "delivery-domain-commands";
 
-    // --- Canali statici (nome = topic Kafka) ---
+    // Canali statici
     private static final String CH_CREATE_REQUESTS = "create-delivery-requests";
     private static final String CH_CREATE_APPROVED = "create-delivery-requests-approved";
     private static final String CH_CREATE_REJECTED = "create-delivery-requests-rejected";
