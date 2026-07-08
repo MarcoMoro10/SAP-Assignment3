@@ -29,6 +29,26 @@ spec:
               value: "delivery-service"
             - name: EV_CHANNELS_LOCATION     # il gateway e' client Kafka per i comandi di dominio
               value: "broker:9092"
+          # Probe sulla LIVENESS (/api/v1/health/live), NON sull'aggregato (/api/v1/health):
+          # l'aggregato sonda i downstream, quindi un downstream giu' marcherebbe NotReady
+          # tutte e 3 le repliche -> blackout totale del gateway. La readiness qui significa
+          # "il processo puo' servire traffico", non "tutta la catena a valle e' sana".
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/live
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
