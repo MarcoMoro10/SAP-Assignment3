@@ -116,8 +116,10 @@ data:
         static_configs:
           - targets: ["delivery-service:9400"]
       - job_name: monitoring-api-gateway
-        static_configs:
-          - targets: ["api-gateway:9401"]
+        dns_sd_configs:
+          - names: ["api-gateway-metrics"]
+            type: A
+            port: 9401
 ---
 apiVersion: apps/v1
 kind: Deployment

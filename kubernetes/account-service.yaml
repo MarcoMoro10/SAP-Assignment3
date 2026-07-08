@@ -21,7 +21,6 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9000
-          # Nessun downstream: l'aggregato /api/v1/health coincide con la liveness -> ok per entrambe.
           livenessProbe:
             httpGet:
               path: /api/v1/health

@@ -26,10 +26,6 @@ spec:
           env:
             - name: EV_CHANNELS_LOCATION    # broker Kafka via DNS del Service "broker"
               value: "broker:9092"
-          # Liveness volutamente PERMISSIVA (initialDelay 45s + failureThreshold 6 x 15s ~= 90s
-          # di grazia): il delivery si aggancia al broker all'avvio, quindi deve poter partire
-          # mentre Kafka si stabilizza SENZA entrare in CrashLoopBackOff. La liveness colpisce
-          # solo un processo davvero morto/appeso a lungo, non uno in attesa del broker.
           livenessProbe:
             httpGet:
               path: /api/v1/health
