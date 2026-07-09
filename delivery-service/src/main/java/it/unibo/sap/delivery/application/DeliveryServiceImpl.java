@@ -199,6 +199,10 @@ public class DeliveryServiceImpl implements DeliveryService {
                 deliveryRepository.save(d);
                 d.clearDomainEvents();
                 metricsObserver.onDeliveryInProgress();
+            } else {
+                System.out.println("WARN: scheduled delivery " + d.getId().value()
+                        + " could not be reconciled with the fleet after restart: "
+                        + outcome.rejectionReasonOpt().orElse("No drone available"));
             }
         }
     }

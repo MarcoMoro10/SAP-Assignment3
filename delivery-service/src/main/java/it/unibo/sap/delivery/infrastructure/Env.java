@@ -18,4 +18,12 @@ final class Env {
             return defaultValue;
         }
     }
+
+    static boolean getBoolean(final String name, final boolean defaultValue) {
+        final String value = System.getenv(name);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        return Boolean.parseBoolean(value.trim());
+    }
 }
