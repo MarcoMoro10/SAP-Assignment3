@@ -1,0 +1,492 @@
+asyncapi: 3.0.0
+info:
+  title: "Shipping on the Air — Delivery Service event channels"
+  version: '1.0.0'
+  description: |
+    Event-based API of the delivery-service. The service is driven over Apache
+    Kafka with a request/reply pattern: clients publish commands on static
+    request channels, and the service replies on per-delivery dynamic channels.
+    Point of view of this document is the delivery-service itself:
+    `receive` = the delivery-service consumes; `send` = the delivery-service produces.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+
+defaultContentType: application/json
+
+servers:
+  kafka:
+    host: localhost:9092
+    protocol: kafka
+    description: Kafka broker hosting the delivery-service event channels
+
+channels:
+
+
+  createDeliveryRequests:
+    address: create-delivery-requests
+    description: Commands to create and validate a new delivery
+    messages:
+      createDeliveryRequest:
+        $ref: '#/components/messages/createDeliveryRequest'
+
+  cancelDeliveryRequests:
+    address: cancel-delivery-requests
+    description: Commands to cancel a delivery before flight
+    messages:
+      cancelDeliveryRequest:
+        $ref: '#/components/messages/cancelDeliveryRequest'
+
+  getDeliveryDetailRequests:
+    address: get-delivery-detail-requests
+    description: Queries for the observable state of a delivery
+    messages:
+      getDeliveryDetailRequest:
+        $ref: '#/components/messages/getDeliveryDetailRequest'
+
+  deliveryTrackingRequests:
+    address: delivery-tracking-requests
+    description: Commands to start tracking a delivery
+    messages:
+      trackDeliveryRequest:
+        $ref: '#/components/messages/trackDeliveryRequest'
+
+  stopTrackingRequests:
+    address: stop-tracking-requests
+    description: Commands to stop tracking a delivery
+    messages:
+      stopTrackingRequest:
+        $ref: '#/components/messages/stopTrackingRequest'
+
+
+  createDeliveryRequestsApproved:
+    address: create-delivery-requests-approved
+    description: A create-delivery command was accepted
+    messages:
+      createDeliveryRequestApproved:
+        $ref: '#/components/messages/createDeliveryRequestApproved'
+
+  createDeliveryRequestsRejected:
+    address: create-delivery-requests-rejected
+    description: A create-delivery command was rejected
+    messages:
+      requestRejected:
+        $ref: '#/components/messages/requestRejected'
+
+  newDeliveryCreated:
+    address: new-delivery-created
+    description: Broadcast that a new delivery has been created
+    messages:
+      newDelivery:
+        $ref: '#/components/messages/newDelivery'
+
+
+  getDeliveryDetailRequestsApproved:
+    address: get-delivery-{deliveryId}-detail-requests-approved
+    description: Reply carrying the requested delivery detail
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      getDeliveryDetailRequestApproved:
+        $ref: '#/components/messages/deliveryDetailView'
+
+  getDeliveryDetailRequestsRejected:
+    address: get-delivery-{deliveryId}-detail-requests-rejected
+    description: Reply when the delivery detail cannot be returned
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      getDeliveryDetailRequestRejected:
+        $ref: '#/components/messages/requestRejected'
+
+  cancelDeliveryRequestsApproved:
+    address: cancel-delivery-{deliveryId}-requests-approved
+    description: Reply when a cancellation succeeded
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      cancelDeliveryRequestApproved:
+        $ref: '#/components/messages/statusReply'
+
+  cancelDeliveryRequestsRejected:
+    address: cancel-delivery-{deliveryId}-requests-rejected
+    description: Reply when a cancellation was rejected
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      cancelDeliveryRequestRejected:
+        $ref: '#/components/messages/requestRejected'
+
+  trackDeliveryRequestsApproved:
+    address: delivery-{deliveryId}-tracking-requests-approved
+    description: Reply carrying the created tracking session handle
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      trackDeliveryRequestApproved:
+        $ref: '#/components/messages/trackDeliveryRequestApproved'
+
+  trackDeliveryRequestsRejected:
+    address: delivery-{deliveryId}-tracking-requests-rejected
+    description: Reply when a tracking request was rejected
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      trackDeliveryRequestRejected:
+        $ref: '#/components/messages/requestRejected'
+
+  stopTrackingRequestsApproved:
+    address: stop-tracking-{deliveryId}-requests-approved
+    description: Reply when tracking was stopped
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      stopTrackingRequestApproved:
+        $ref: '#/components/messages/statusReply'
+
+  stopTrackingRequestsRejected:
+    address: stop-tracking-{deliveryId}-requests-rejected
+    description: Reply when a stop-tracking request was rejected
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      stopTrackingRequestRejected:
+        $ref: '#/components/messages/requestRejected'
+
+
+  deliveryTrackingExternalEvents:
+    address: delivery-tracking-{deliveryId}-external-events
+    description: |
+      Live tracking frames pushed for an active session, plus the terminal
+      TRACKING_CLOSED event. This is the stream bridged to the client WebSocket.
+    parameters:
+      deliveryId:
+        description: Unique identifier of the delivery.
+    messages:
+      trackingUpdate:
+        $ref: '#/components/messages/trackingUpdate'
+      trackingClosed:
+        $ref: '#/components/messages/trackingClosed'
+
+operations:
+
+  receiveCreateDeliveryRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/createDeliveryRequests'
+  approveCreateDeliveryRequest:
+    action: send
+    channel:
+      $ref: '#/channels/createDeliveryRequestsApproved'
+  rejectCreateDeliveryRequest:
+    action: send
+    channel:
+      $ref: '#/channels/createDeliveryRequestsRejected'
+  informNewDelivery:
+    action: send
+    channel:
+      $ref: '#/channels/newDeliveryCreated'
+
+  receiveCancelDeliveryRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/cancelDeliveryRequests'
+  approveCancelDeliveryRequest:
+    action: send
+    channel:
+      $ref: '#/channels/cancelDeliveryRequestsApproved'
+  rejectCancelDeliveryRequest:
+    action: send
+    channel:
+      $ref: '#/channels/cancelDeliveryRequestsRejected'
+
+  receiveGetDeliveryDetailRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/getDeliveryDetailRequests'
+  approveGetDeliveryDetailRequest:
+    action: send
+    channel:
+      $ref: '#/channels/getDeliveryDetailRequestsApproved'
+  rejectGetDeliveryDetailRequest:
+    action: send
+    channel:
+      $ref: '#/channels/getDeliveryDetailRequestsRejected'
+
+  receiveTrackDeliveryRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/deliveryTrackingRequests'
+  approveTrackDeliveryRequest:
+    action: send
+    channel:
+      $ref: '#/channels/trackDeliveryRequestsApproved'
+  rejectTrackDeliveryRequest:
+    action: send
+    channel:
+      $ref: '#/channels/trackDeliveryRequestsRejected'
+
+  receiveStopTrackingRequest:
+    action: receive
+    channel:
+      $ref: '#/channels/stopTrackingRequests'
+  approveStopTrackingRequest:
+    action: send
+    channel:
+      $ref: '#/channels/stopTrackingRequestsApproved'
+  rejectStopTrackingRequest:
+    action: send
+    channel:
+      $ref: '#/channels/stopTrackingRequestsRejected'
+
+  emitTrackingUpdate:
+    action: send
+    channel:
+      $ref: '#/channels/deliveryTrackingExternalEvents'
+
+components:
+  messages:
+
+    createDeliveryRequest:
+      name: createDeliveryRequest
+      title: Create delivery command
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/CreateDeliveryRequest'
+
+    createDeliveryRequestApproved:
+      name: createDeliveryRequestApproved
+      title: Create delivery approved
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/CreateDeliveryApproved'
+
+    newDelivery:
+      name: newDelivery
+      title: New delivery created (notification)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/NewDelivery'
+
+    cancelDeliveryRequest:
+      name: cancelDeliveryRequest
+      title: Cancel delivery command
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OwnedCommand'
+
+    getDeliveryDetailRequest:
+      name: getDeliveryDetailRequest
+      title: Get delivery detail query
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OwnedCommand'
+
+    trackDeliveryRequest:
+      name: trackDeliveryRequest
+      title: Start tracking command
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/OwnedCommand'
+
+    stopTrackingRequest:
+      name: stopTrackingRequest
+      title: Stop tracking command
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/RequestRef'
+
+    trackDeliveryRequestApproved:
+      name: trackDeliveryRequestApproved
+      title: Tracking session created
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TrackingHandle'
+
+    deliveryDetailView:
+      name: deliveryDetailView
+      title: Delivery detail view
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/DeliveryView'
+
+    statusReply:
+      name: statusReply
+      title: Status reply
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/StatusReply'
+
+    requestRejected:
+      name: requestRejected
+      title: Rejected reply
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/Rejection'
+
+    trackingUpdate:
+      name: trackingUpdate
+      title: Live tracking frame
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TrackingUpdate'
+
+    trackingClosed:
+      name: trackingClosed
+      title: Tracking closed
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/TrackingClosed'
+
+  schemas:
+
+    DeliveryStatus:
+      type: string
+      enum: [REQUESTED, SCHEDULED, ASSIGNED, IN_PROGRESS, DELIVERED, REJECTED, CANCELLED, ABOLISHED]
+
+    Place:
+      type: object
+      required: [street, number]
+      properties:
+        street: { type: string, example: "via Emilia" }
+        number: { type: integer, example: 9 }
+
+    Coordinates:
+      type: object
+      properties:
+        latitude: { type: number, example: 44.50 }
+        longitude: { type: number, example: 11.35 }
+
+    RequestRef:
+      type: object
+      description: Correlation envelope shared by all commands.
+      required: [requestId, deliveryId]
+      properties:
+        requestId:
+          type: string
+          description: Correlation id echoed back on the reply channel.
+        deliveryId:
+          type: string
+
+    OwnedCommand:
+      allOf:
+        - $ref: '#/components/schemas/RequestRef'
+        - type: object
+          required: [senderId]
+          properties:
+            senderId:
+              type: string
+              description: Owner of the delivery, for the ownership check.
+
+    CreateDeliveryRequest:
+      type: object
+      required: [requestId, senderId, weight, startingPlace, destinationPlace, deadlineMinutes]
+      properties:
+        requestId: { type: string }
+        senderId: { type: string }
+        weight:
+          type: number
+          description: Package weight in kilograms
+          example: 2
+        startingPlace: { $ref: '#/components/schemas/Place' }
+        destinationPlace: { $ref: '#/components/schemas/Place' }
+        immediate:
+          type: boolean
+          default: true
+          description: true for immediate delivery; false for a scheduled one (scheduledAt required).
+        scheduledAt:
+          type: string
+          format: date-time
+          example: "2026-06-10T10:00:00+02:00"
+        deadlineMinutes:
+          type: integer
+          minimum: 1
+          description: Maximum elapsed time (minutes) within which the delivery must complete.
+          example: 30
+
+    CreateDeliveryApproved:
+      type: object
+      properties:
+        requestId: { type: string }
+        deliveryId: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        assignedDroneId:
+          type: string
+          description: Drone assigned (immediate) or reserved (scheduled), if any.
+
+    NewDelivery:
+      type: object
+      properties:
+        deliveryId: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        senderId: { type: string }
+
+    TrackingHandle:
+      type: object
+      properties:
+        requestId: { type: string }
+        deliveryId: { type: string }
+        trackingSessionId: { type: string }
+
+    DeliveryView:
+      type: object
+      properties:
+        requestId: { type: string }
+        deliveryId: { type: string }
+        senderId: { type: string }
+        weight: { type: number }
+        startingPlace: { $ref: '#/components/schemas/Place' }
+        destinationPlace: { $ref: '#/components/schemas/Place' }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        estimatedTimeRemainingSeconds:
+          type: integer
+          description: Estimated time remaining in seconds; 0 once DELIVERED.
+
+    StatusReply:
+      type: object
+      properties:
+        requestId: { type: string }
+        deliveryId: { type: string }
+        status:
+          type: string
+          description: Terminal outcome of the command (e.g. CANCELLED, STOPPED).
+
+    Rejection:
+      type: object
+      properties:
+        requestId: { type: string }
+        deliveryId: { type: string }
+        error: { type: string }
+        errorType:
+          type: string
+          description: >-
+            Machine-readable reason, e.g. VALIDATION_REJECTED, BAD_REQUEST,
+            NOT_FOUND, CONFLICT, CANNOT_CANCEL_IN_FLIGHT, INTERNAL.
+
+    TrackingUpdate:
+      type: object
+      description: Frame pushed while a tracking session is active.
+      properties:
+        deliveryId: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        position: { $ref: '#/components/schemas/Coordinates' }
+        estimatedTimeRemainingSeconds:
+          type: integer
+          description: 0 when the delivery is DELIVERED.
+
+    TrackingClosed:
+      type: object
+      description: Terminal event closing a tracking stream.
+      properties:
+        event:
+          type: string
+          enum: [TRACKING_CLOSED]
+        deliveryId: { type: string }
