@@ -36,6 +36,11 @@ services:
     networks: [shipping_network]
     ports:
       - "9000:9000"
+    environment:
+      - ACCOUNT_STORE_FILE=data/accounts.json
+      - ACCOUNT_RESET_STORE=false
+    volumes:
+      - account-data:/project/data
     restart: always
 
   delivery-service:
@@ -103,3 +108,6 @@ services:
 networks:
   shipping_network:
     driver: bridge
+
+volumes:
+  account-data:
