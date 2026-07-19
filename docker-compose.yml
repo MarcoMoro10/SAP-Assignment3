@@ -68,8 +68,20 @@ services:
       - "9002:9002"
       - "9003:9003"
       - "9400:9400"
+    environment:
+      - DELIVERY_RESET_STORE=false
+      # Placeholder, symmetric with account's ACCOUNT_STORE_FILE. Currently inert: the app uses the
+      # hardcoded FileBasedEventStore.DEFAULT_FILE (== this value). Becomes wired at STEP 7 (PVC).
+      - DELIVERY_EVENTS_FILE=data/delivery-events.json
+    volumes:
+      - delivery-data:/project/data
     depends_on:
       - kafka
+    # restart: always is a CONSEQUENCE of the STEP 4 boot recovery, not an independent add.
+    # Pre-recovery the delivery state was not coherently reconstructable at restart (this is why it
+    # lacked the policy that account/gateway/prometheus have). With the recovery policy the restart is
+    # safe because the RESULTING state is always coherent (not because the prior state is fully restored).
+    restart: always
 
   api-gateway:
     build:
@@ -126,3 +138,4 @@ networks:
 
 volumes:
   account-data:
+  delivery-data:

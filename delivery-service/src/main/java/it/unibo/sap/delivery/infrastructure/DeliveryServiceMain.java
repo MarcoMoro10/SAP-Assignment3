@@ -2,6 +2,7 @@ package it.unibo.sap.delivery.infrastructure;
 
 import io.vertx.core.Vertx;
 import it.unibo.sap.delivery.application.DeliveryRepository;
+import it.unibo.sap.delivery.application.DeliveryRecoveryService;
 import it.unibo.sap.delivery.application.DeliveryService;
 import it.unibo.sap.delivery.application.DeliveryServiceEventObserver;
 import it.unibo.sap.delivery.application.DeliveryServiceImpl;
@@ -57,6 +58,8 @@ public class DeliveryServiceMain {
         fleetModule.setTelemetrySink(new DroneEventHandlerSink(droneEventHandler));
 
         FleetSeeder.seed(droneRepository);
+
+        new DeliveryRecoveryService(deliveryRepository, fleetModule, metricsObserver).recover();
 
         vertx.deployVerticle(new DeliveryServiceController(deliveryService, deliveryPort, eventChannelsLocation));
         vertx.deployVerticle(new FleetMonitoringController(deliveryService, adminPort));
