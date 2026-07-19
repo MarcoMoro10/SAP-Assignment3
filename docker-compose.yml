@@ -43,6 +43,21 @@ services:
       - account-data:/project/data
     restart: always
 
+  session-service:
+    build:
+      context: ./session-service
+    image: session-service
+    container_name: session-service
+    networks: [shipping_network]
+    ports:
+      - "9001:9001"
+    environment:
+      - ACCOUNT_HOST=account-service
+      - ACCOUNT_PORT=9000
+    depends_on:
+      - account-service
+    restart: always
+
   delivery-service:
     build:
       context: ./delivery-service
