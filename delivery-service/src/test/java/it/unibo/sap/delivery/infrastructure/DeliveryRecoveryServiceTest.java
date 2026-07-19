@@ -2,6 +2,10 @@ package it.unibo.sap.delivery.infrastructure;
 
 import it.unibo.sap.delivery.application.DeliveryRecoveryService;
 import it.unibo.sap.delivery.application.EventStore;
+import it.unibo.sap.delivery.application.fleet.FleetAssignmentResult;
+import it.unibo.sap.delivery.application.fleet.FleetFeasibilityRequest;
+import it.unibo.sap.delivery.application.fleet.FleetPort;
+import it.unibo.sap.delivery.application.fleet.FleetReservationResult;
 import it.unibo.sap.delivery.application.fleet.FleetViews;
 import it.unibo.sap.delivery.domain.deliveries.Coordinates;
 import it.unibo.sap.delivery.domain.deliveries.Delivery;
@@ -21,6 +25,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -176,6 +183,58 @@ class DeliveryRecoveryServiceTest {
         assertEquals(DeliveryStatus.CANCELLED,
                 new EventSourcedDeliveryRepository(storeFromFile())
                         .findById(DeliveryId.of(id)).orElseThrow().getStatus());
+    }
+
+    @Test
+    void aFailingRecoveryOfOneDeliveryDoesNotAbortTheOthers() {
+        persist(inFlight());
+        final String poison = persist(inFlight());
+
+        final Restart base = restart();
+        final FleetPort faulty = new FleetPort() {
+            @Override public FleetAssignmentResult assignNearestDrone(final FleetFeasibilityRequest req) {
+                if (poison.equals(req.deliveryId())) {
+                    throw new IllegalStateException("boom: simulated fleet failure for " + poison);
+                }
+                return base.fleet().assignNearestDrone(req);
+            }
+            @Override public FleetReservationResult reserveDroneForSlot(final FleetFeasibilityRequest req,
+                                                                        final LocalDateTime slot) {
+                return base.fleet().reserveDroneForSlot(req, slot);
+            }
+            @Override public FleetAssignmentResult assignReservedDrone(final String deliveryId) {
+                return base.fleet().assignReservedDrone(deliveryId);
+            }
+            @Override public void releaseReservation(final String droneId, final String deliveryId) {
+                base.fleet().releaseReservation(droneId, deliveryId);
+            }
+            @Override public void startDelivery(final String droneId) {
+                base.fleet().startDelivery(droneId);
+            }
+            @Override public void completeDelivery(final String deliveryId) {
+                base.fleet().completeDelivery(deliveryId);
+            }
+            @Override public List<FleetViews.FleetDroneView> fleetMonitoringView() {
+                return base.fleet().fleetMonitoringView();
+            }
+        };
+
+        final PrintStream originalErr = System.err;
+        final ByteArrayOutputStream capturedErr = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(capturedErr, true, StandardCharsets.UTF_8));
+        try {
+            new DeliveryRecoveryService(base.repository(), faulty).recover();  // must not propagate
+        } finally {
+            System.setErr(originalErr);
+        }
+
+        assertTrue(capturedErr.toString(StandardCharsets.UTF_8).contains(poison),
+                "the catch branch was actually taken and logged the poison delivery id");
+        assertEquals(1, carryingDrones(base.fleet()),
+                "the healthy in-flight delivery is still recovered despite the poison one failing");
+        assertEquals(DeliveryStatus.IN_PROGRESS,
+                base.repository().findById(DeliveryId.of(poison)).orElseThrow().getStatus(),
+                "the failed delivery is left IN_PROGRESS but does not abort the boot");
     }
 
     private static long carryingDrones(final FleetModule fleet) {

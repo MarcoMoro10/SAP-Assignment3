@@ -29,22 +29,30 @@ public class DeliveryRecoveryService {
         int restarted = 0;
         int cancelled = 0;
         int skipped = 0;
+        int failed = 0;
         for (final Delivery delivery : deliveryRepository.findAll()) {
-            switch (delivery.getStatus()) {
-                case IN_PROGRESS -> {
-                    if (restartInFlight(delivery)) {
-                        restarted++;
+            try {
+                switch (delivery.getStatus()) {
+                    case IN_PROGRESS -> {
+                        if (restartInFlight(delivery)) {
+                            restarted++;
+                        }
                     }
+                    case SCHEDULED -> {
+                        cancelScheduled(delivery);
+                        cancelled++;
+                    }
+                    default -> skipped++;
                 }
-                case SCHEDULED -> {
-                    cancelScheduled(delivery);
-                    cancelled++;
-                }
-                default -> skipped++;
+            } catch (final RuntimeException e) {
+                failed++;
+                System.err.println("WARN recovery: delivery " + delivery.getId().value()
+                        + " could not be recovered (" + e.getMessage()
+                        + "); skipped, boot continues");
             }
         }
         System.out.println("delivery recovery complete: restarted=" + restarted
-                + ", cancelled=" + cancelled + ", skipped=" + skipped);
+                + ", cancelled=" + cancelled + ", skipped=" + skipped + ", failed=" + failed);
     }
 
     private boolean restartInFlight(final Delivery delivery) {
