@@ -13,6 +13,9 @@ import it.unibo.sap.delivery.application.CreateDeliveryResult;
 import it.unibo.sap.delivery.application.DeliveryExceptions.BadRequestException;
 import it.unibo.sap.delivery.application.DeliveryExceptions.CannotCancelInFlightException;
 import it.unibo.sap.delivery.application.DeliveryExceptions.DeliveryNotFoundException;
+import it.unibo.sap.delivery.application.DeliveryExceptions.ForbiddenDeliveryAccessException;
+import it.unibo.sap.delivery.application.DeliveryExceptions.ForbiddenException;
+import it.unibo.sap.delivery.application.DeliveryExceptions.UnauthorizedException;
 import it.unibo.sap.delivery.application.DeliveryExceptions.ValidationRejectedException;
 import it.unibo.sap.delivery.application.DeliveryService;
 import it.unibo.sap.delivery.application.TrackingHandle;
@@ -30,6 +33,8 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
 
     public static final String DOMAIN_COMMAND_EXECUTOR = "delivery-domain-commands";
 
+    private static final String ROLE_SENDER = "SENDER";
+
     // Canali statici
     private static final String CH_CREATE_REQUESTS = "create-delivery-requests";
     private static final String CH_CREATE_APPROVED = "create-delivery-requests-approved";
@@ -41,6 +46,7 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
     private static final String CH_STOP_TRACKING_REQUESTS = "stop-tracking-requests";
 
     private final DeliveryService deliveryService;
+    private final RequestAuthorizer authorizer;
     private final int port;
     private final String eventChannelsLocation;
 
@@ -61,9 +67,10 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
 
     private final Map<String, InputEventChannel> trackingForwarders = new ConcurrentHashMap<>();
 
-    public DeliveryServiceController(final DeliveryService deliveryService, final int port,
-                                     final String eventChannelsLocation) {
+    public DeliveryServiceController(final DeliveryService deliveryService, final RequestAuthorizer authorizer,
+                                     final int port, final String eventChannelsLocation) {
         this.deliveryService = deliveryService;
+        this.authorizer = authorizer;
         this.port = port;
         this.eventChannelsLocation = eventChannelsLocation;
     }
@@ -121,18 +128,40 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
         }
     }
 
+    /**
+     * TRANSITIONAL double read (STEP 5 -> STEP 6). If the payload carries a {@code sessionId} we
+     * introspect it, enforce the role, and derive the trusted senderId (= authenticated accountId);
+     * otherwise we fall back to the legacy {@code senderId} the old gateway still sends, unchanged.
+     * The introspection is a blocking HTTP call, so this MUST be invoked from a worker thread
+     * (inside {@code commandExecutor.executeBlocking}), never on the event loop.
+     */
+    private String resolveCaller(final JsonObject req, final String requiredRole) {
+        final String sessionId = req.getString("sessionId");
+        if (sessionId == null || sessionId.isBlank()) {
+            return req.getString("senderId");                       // LEGACY path: unchanged
+        }
+        final RequestAuthorizer.AuthResult result = authorizer.authorize(sessionId, requiredRole);
+        if (result instanceof RequestAuthorizer.AuthResult.Authorized ok) {
+            return ok.accountId();
+        }
+        final RequestAuthorizer.AuthResult.Rejected rejected = (RequestAuthorizer.AuthResult.Rejected) result;
+        if (rejected.httpStatus() == 403) {
+            throw new ForbiddenException(rejected.reason());
+        }
+        throw new UnauthorizedException(rejected.reason());
+    }
+
+    private record CreatedOutcome(CreateDeliveryResult result, String senderId) { }
+
     private void onCreateRequest(final JsonObject req) {
         final String requestId = req.getString("requestId");
-        final CreateDeliveryCommand cmd;
-        try {
-            cmd = toCommand(req);
-        } catch (final BadRequestException | IllegalArgumentException e) {
-            createRejected.postEvent(rejection(requestId, e.getMessage(), "BAD_REQUEST"));
-            return;
-        }
-        commandExecutor.<CreateDeliveryResult>executeBlocking(
-                        () -> deliveryService.createDelivery(cmd), true)
-                .onSuccess(result -> {
+        commandExecutor.<CreatedOutcome>executeBlocking(() -> {
+                    final String senderId = resolveCaller(req, ROLE_SENDER);
+                    final CreateDeliveryCommand cmd = toCommand(req, senderId);
+                    return new CreatedOutcome(deliveryService.createDelivery(cmd), senderId);
+                }, true)
+                .onSuccess(outcome -> {
+                    final CreateDeliveryResult result = outcome.result();
                     final JsonObject approved = new JsonObject()
                             .put("requestId", requestId)
                             .put("deliveryId", result.deliveryId())
@@ -144,41 +173,32 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
                     newDeliveryCreated.postEvent(new JsonObject()
                             .put("deliveryId", result.deliveryId())
                             .put("status", result.status())
-                            .put("senderId", cmd.senderId()));
+                            .put("senderId", outcome.senderId()));
                 })
-                .onFailure(e -> {
-                    final String errorType;
-                    if (e instanceof ValidationRejectedException) {
-                        errorType = "VALIDATION_REJECTED";
-                    } else if (e instanceof BadRequestException || e instanceof IllegalArgumentException) {
-                        errorType = "BAD_REQUEST";
-                    } else {
-                        errorType = "INTERNAL";
-                    }
-                    createRejected.postEvent(rejection(requestId, e.getMessage(), errorType));
-                });
+                .onFailure(e -> createRejected.postEvent(rejection(requestId, e.getMessage(), createErrorType(e))));
     }
 
     private void onGetRequest(final JsonObject req) {
         final String requestId = req.getString("requestId");
         final String deliveryId = req.getString("deliveryId");
-        final String senderId = req.getString("senderId");
-        commandExecutor.<Optional<DeliveryTrackingView>>executeBlocking(
-                        () -> deliveryService.getDelivery(deliveryId, senderId), true)
+        commandExecutor.<Optional<DeliveryTrackingView>>executeBlocking(() -> {
+                    final String senderId = resolveCaller(req, ROLE_SENDER);
+                    return deliveryService.getDelivery(deliveryId, senderId);
+                }, true)
                 .onSuccess(opt -> opt.ifPresentOrElse(
                         view -> out(dynamic("get-delivery-", deliveryId, "-detail-requests-approved"))
                                 .postEvent(toJson(view).put("requestId", requestId)),
                         () -> out(dynamic("get-delivery-", deliveryId, "-detail-requests-rejected"))
                                 .postEvent(rejection(requestId, deliveryId, "Delivery not found", "NOT_FOUND"))))
                 .onFailure(e -> out(dynamic("get-delivery-", deliveryId, "-detail-requests-rejected"))
-                        .postEvent(rejection(requestId, deliveryId, e.getMessage(), "INTERNAL")));
+                        .postEvent(rejection(requestId, deliveryId, e.getMessage(), simpleErrorType(e))));
     }
 
     private void onCancelRequest(final JsonObject req) {
         final String requestId = req.getString("requestId");
         final String deliveryId = req.getString("deliveryId");
-        final String senderId = req.getString("senderId");
         commandExecutor.<Void>executeBlocking(() -> {
+                    final String senderId = resolveCaller(req, ROLE_SENDER);
                     deliveryService.cancelDelivery(deliveryId, senderId);
                     return null;
                 }, true)
@@ -187,42 +207,41 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
                                 .put("requestId", requestId)
                                 .put("deliveryId", deliveryId)
                                 .put("status", "CANCELLED")))
-                .onFailure(e -> {
-                    final String errorType;
-                    if (e instanceof CannotCancelInFlightException) {
-                        errorType = "CANNOT_CANCEL_IN_FLIGHT";
-                    } else if (e instanceof DeliveryNotFoundException) {
-                        errorType = "NOT_FOUND";
-                    } else if (e instanceof IllegalStateException) {
-                        errorType = "CONFLICT";
-                    } else {
-                        errorType = "INTERNAL";
-                    }
-                    out(dynamic("cancel-delivery-", deliveryId, "-requests-rejected"))
-                            .postEvent(rejection(requestId, deliveryId, e.getMessage(), errorType));
-                });
+                .onFailure(e -> out(dynamic("cancel-delivery-", deliveryId, "-requests-rejected"))
+                        .postEvent(rejection(requestId, deliveryId, e.getMessage(), cancelErrorType(e))));
     }
 
     private void onTrackRequest(final JsonObject req) {
         final String requestId = req.getString("requestId");
         final String deliveryId = req.getString("deliveryId");
-        final String senderId = req.getString("senderId");
-        commandExecutor.<TrackingHandle>executeBlocking(
-                        () -> deliveryService.startTracking(deliveryId, senderId), true)
+        commandExecutor.<TrackingHandle>executeBlocking(() -> {
+                    final String senderId = resolveCaller(req, ROLE_SENDER);
+                    return deliveryService.startTracking(deliveryId, senderId);
+                }, true)
                 .onSuccess(handle -> setupForwarder(deliveryId).onComplete(ar ->
                         out(dynamic("delivery-", deliveryId, "-tracking-requests-approved"))
                                 .postEvent(new JsonObject()
                                         .put("requestId", requestId)
                                         .put("deliveryId", deliveryId)
                                         .put("trackingSessionId", handle.trackingSessionId()))))
-                .onFailure(e -> {
-                    final String errorType = e instanceof DeliveryNotFoundException ? "NOT_FOUND" : "INTERNAL";
-                    out(dynamic("delivery-", deliveryId, "-tracking-requests-rejected"))
-                            .postEvent(rejection(requestId, deliveryId, e.getMessage(), errorType));
-                });
+                .onFailure(e -> out(dynamic("delivery-", deliveryId, "-tracking-requests-rejected"))
+                        .postEvent(rejection(requestId, deliveryId, e.getMessage(), simpleErrorType(e))));
     }
 
     private void onStopTrackingRequest(final JsonObject req) {
+        // Authorize (blocking introspection off the event loop), then run the unchanged stop logic
+        // back on the calling context in onSuccess.
+        commandExecutor.<String>executeBlocking(() -> resolveCaller(req, ROLE_SENDER), true)
+                .onSuccess(senderId -> doStopTracking(req))
+                .onFailure(e -> {
+                    final String requestId = req.getString("requestId");
+                    final String deliveryId = req.getString("deliveryId");
+                    out(dynamic("stop-tracking-", deliveryId, "-requests-rejected"))
+                            .postEvent(rejection(requestId, deliveryId, e.getMessage(), simpleErrorType(e)));
+                });
+    }
+
+    private void doStopTracking(final JsonObject req) {
         final String requestId = req.getString("requestId");
         final String deliveryId = req.getString("deliveryId");
         final InputEventChannel forwarder = trackingForwarders.remove(deliveryId);
@@ -261,6 +280,59 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
                 n -> new OutputEventChannel(vertx, n, eventChannelsLocation));
     }
 
+
+    private static String authErrorType(final Throwable e) {
+        if (e instanceof UnauthorizedException) {
+            return "UNAUTHORIZED";
+        }
+        if (e instanceof ForbiddenException) {
+            return "FORBIDDEN";
+        }
+        return null;
+    }
+
+    private static String createErrorType(final Throwable e) {
+        final String auth = authErrorType(e);
+        if (auth != null) {
+            return auth;
+        }
+        if (e instanceof ValidationRejectedException) {
+            return "VALIDATION_REJECTED";
+        }
+        if (e instanceof BadRequestException || e instanceof IllegalArgumentException) {
+            return "BAD_REQUEST";
+        }
+        return "INTERNAL";
+    }
+
+    private static String cancelErrorType(final Throwable e) {
+        final String auth = authErrorType(e);
+        if (auth != null) {
+            return auth;
+        }
+        if (e instanceof ForbiddenDeliveryAccessException) {
+            return "FORBIDDEN";
+        }
+        if (e instanceof CannotCancelInFlightException) {
+            return "CANNOT_CANCEL_IN_FLIGHT";
+        }
+        if (e instanceof DeliveryNotFoundException) {
+            return "NOT_FOUND";
+        }
+        if (e instanceof IllegalStateException) {
+            return "CONFLICT";
+        }
+        return "INTERNAL";
+    }
+
+    private static String simpleErrorType(final Throwable e) {
+        final String auth = authErrorType(e);
+        if (auth != null) {
+            return auth;
+        }
+        return e instanceof DeliveryNotFoundException ? "NOT_FOUND" : "INTERNAL";
+    }
+
     private static JsonObject rejection(final String requestId, final String reason, final String errorType) {
         return new JsonObject()
                 .put("requestId", requestId)
@@ -280,11 +352,10 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
     }
 
 
-    private CreateDeliveryCommand toCommand(final JsonObject body) {
+    private CreateDeliveryCommand toCommand(final JsonObject body, final String senderId) {
         if (body == null) {
             throw new BadRequestException("Missing request body");
         }
-        final String senderId = body.getString("senderId");
         final double weight = body.getDouble("weight", 0.0);
         final JsonObject start = body.getJsonObject("startingPlace");
         final JsonObject dest = body.getJsonObject("destinationPlace");

@@ -73,10 +73,17 @@ services:
       # Placeholder, symmetric with account's ACCOUNT_STORE_FILE. Currently inert: the app uses the
       # hardcoded FileBasedEventStore.DEFAULT_FILE (== this value). Becomes wired at STEP 7 (PVC).
       - DELIVERY_EVENTS_FILE=data/delivery-events.json
+      # STEP 5: the delivery-service introspects sessions to authorize commands.
+      - SESSION_HOST=session-service
+      - SESSION_PORT=9001
     volumes:
       - delivery-data:/project/data
     depends_on:
+      # Simple depends_on (no condition: service_healthy). session->delivery and delivery->session
+      # are RUNTIME calls (commands / session introspection), not startup dependencies: a reciprocal
+      # health gate would deadlock. Order-only here.
       - kafka
+      - session-service
     # restart: always is a CONSEQUENCE of the STEP 4 boot recovery, not an independent add.
     # Pre-recovery the delivery state was not coherently reconstructable at restart (this is why it
     # lacked the policy that account/gateway/prometheus have). With the recovery policy the restart is

@@ -1,6 +1,7 @@
 package it.unibo.sap.delivery.infrastructure;
 
 import io.vertx.core.Vertx;
+import io.vertx.ext.web.client.WebClient;
 import it.unibo.sap.delivery.application.DeliveryRepository;
 import it.unibo.sap.delivery.application.DeliveryRecoveryService;
 import it.unibo.sap.delivery.application.DeliveryService;
@@ -24,6 +25,9 @@ public class DeliveryServiceMain {
 
     static final String DEFAULT_EV_CHANNELS_LOCATION = "broker:9092";
 
+    static final String DEFAULT_SESSION_HOST = "session-service";
+    static final int DEFAULT_SESSION_PORT = 9001;
+
     static final double DRONE_SPEED_UNITS_PER_SECOND = 0.01;
 
     public static void main(final String[] args) {
@@ -31,8 +35,14 @@ public class DeliveryServiceMain {
         final int adminPort = Env.getInt("FLEET_PORT", DEFAULT_ADMIN_PORT);
         final int metricsPort = Env.getInt("DELIVERY_METRICS_PORT", DEFAULT_METRICS_PORT);
         final String eventChannelsLocation = Env.get("EV_CHANNELS_LOCATION", DEFAULT_EV_CHANNELS_LOCATION);
+        final String sessionHost = Env.get("SESSION_HOST", DEFAULT_SESSION_HOST);
+        final int sessionPort = Env.getInt("SESSION_PORT", DEFAULT_SESSION_PORT);
 
         final Vertx vertx = Vertx.vertx();
+
+        final WebClient webClient = WebClient.create(vertx);
+        final RequestAuthorizer authorizer = new RequestAuthorizer(
+                new SessionValidatorProxy(webClient, sessionHost, sessionPort));
 
         final EventStore eventStore = Env.getBoolean("DELIVERY_RESET_STORE", false)
                 ? FileBasedEventStore.resetting()
@@ -61,8 +71,8 @@ public class DeliveryServiceMain {
 
         new DeliveryRecoveryService(deliveryRepository, fleetModule, metricsObserver).recover();
 
-        vertx.deployVerticle(new DeliveryServiceController(deliveryService, deliveryPort, eventChannelsLocation));
-        vertx.deployVerticle(new FleetMonitoringController(deliveryService, adminPort));
+        vertx.deployVerticle(new DeliveryServiceController(deliveryService, authorizer, deliveryPort, eventChannelsLocation));
+        vertx.deployVerticle(new FleetMonitoringController(deliveryService, authorizer, adminPort));
         vertx.deployVerticle(new VertxSchedulerVerticle(deliveryService));
     }
 }
