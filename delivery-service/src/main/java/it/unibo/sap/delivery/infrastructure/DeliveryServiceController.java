@@ -128,19 +128,8 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
         }
     }
 
-    /**
-     * TRANSITIONAL double read (STEP 5 -> STEP 6). If the payload carries a {@code sessionId} we
-     * introspect it, enforce the role, and derive the trusted senderId (= authenticated accountId);
-     * otherwise we fall back to the legacy {@code senderId} the old gateway still sends, unchanged.
-     * The introspection is a blocking HTTP call, so this MUST be invoked from a worker thread
-     * (inside {@code commandExecutor.executeBlocking}), never on the event loop.
-     */
     private String resolveCaller(final JsonObject req, final String requiredRole) {
-        final String sessionId = req.getString("sessionId");
-        if (sessionId == null || sessionId.isBlank()) {
-            return req.getString("senderId");                       // LEGACY path: unchanged
-        }
-        final RequestAuthorizer.AuthResult result = authorizer.authorize(sessionId, requiredRole);
+        final RequestAuthorizer.AuthResult result = authorizer.authorize(req.getString("sessionId"), requiredRole);
         if (result instanceof RequestAuthorizer.AuthResult.Authorized ok) {
             return ok.accountId();
         }
@@ -229,8 +218,6 @@ public class DeliveryServiceController extends AbstractVerticle implements Input
     }
 
     private void onStopTrackingRequest(final JsonObject req) {
-        // Authorize (blocking introspection off the event loop), then run the unchanged stop logic
-        // back on the calling context in onSuccess.
         commandExecutor.<String>executeBlocking(() -> resolveCaller(req, ROLE_SENDER), true)
                 .onSuccess(senderId -> doStopTracking(req))
                 .onFailure(e -> {

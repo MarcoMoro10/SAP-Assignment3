@@ -129,8 +129,11 @@ public final class World {
     }
 
     private void openTrackingSocket() {
+        final java.net.URI wsUri = java.net.URI.create(lastBody.getString("webSocketUrl"));
+        final String requestUri = wsUri.getRawPath()
+                + (wsUri.getRawQuery() != null ? "?" + wsUri.getRawQuery() : "");
         final CompletableFuture<WebSocket> connected = new CompletableFuture<>();
-        wsClient.connect(Setup.GATEWAY_PORT, Setup.HOST, "/api/v1/track/" + trackingSessionId)
+        wsClient.connect(wsUri.getPort(), wsUri.getHost(), requestUri)
                 .onSuccess(socket -> {
                     socket.textMessageHandler(frames::add);
                     socket.closeHandler(v -> trackingClosed = true);

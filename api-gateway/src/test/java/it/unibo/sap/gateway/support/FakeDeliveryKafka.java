@@ -49,7 +49,7 @@ public final class FakeDeliveryKafka {
     private void onGet(final JsonObject req) {
         final String requestId = req.getString("requestId");
         final String deliveryId = req.getString("deliveryId");
-        if ("user-1".equals(req.getString("senderId"))) {
+        if ("user-1".equals(req.getString("sessionId"))) {
             post("get-delivery-" + deliveryId + "-detail-requests-approved", new JsonObject()
                     .put("requestId", requestId).put("deliveryId", deliveryId).put("status", "IN_PROGRESS"));
         } else {

@@ -6,7 +6,6 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
-import it.unibo.sap.gateway.application.DeliveryService;
 import it.unibo.sap.gateway.support.FakeDeliveryKafka;
 import it.unibo.sap.gateway.support.KafkaTestSupport;
 import org.junit.jupiter.api.AfterAll;
@@ -34,7 +33,9 @@ class DeliveryServiceProxyIntegrationTest {
 
     private static Vertx vertx;
     private static WebClient webClient;
-    private static DeliveryService proxy;
+    private static DeliveryServiceProxy proxy;
+    private static final java.util.concurrent.atomic.AtomicReference<String> lastFleetSessionHeader =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
     @BeforeAll
     static void startStub() {
@@ -45,17 +46,26 @@ class DeliveryServiceProxyIntegrationTest {
 
         final Router router = Router.router(vertx);
         router.route("/api/v1/*").handler(BodyHandler.create());
-        router.get("/api/v1/admin/fleet").handler(ctx ->
+        router.get("/api/v1/admin/fleet").handler(ctx -> {
+            lastFleetSessionHeader.set(ctx.request().getHeader("X-Session-Id"));
+            ctx.response().setStatusCode(200).putHeader("Content-Type", "application/json")
+                    .end(new JsonArray().add(new JsonObject()
+                            .put("droneId", "DRN-1").put("status", "AVAILABLE")).encode());
+        });
+        router.get("/api/v1/user-sessions/:sessionId").handler(ctx ->
                 ctx.response().setStatusCode(200).putHeader("Content-Type", "application/json")
-                        .end(new JsonArray().add(new JsonObject()
-                                .put("droneId", "DRN-1").put("status", "AVAILABLE")).encode()));
+                        .end(new JsonObject()
+                                .put("accountId", "acc-" + ctx.pathParam("sessionId"))
+                                .put("role", "SENDER").encode()));
         final CountDownLatch latch = new CountDownLatch(1);
         vertx.createHttpServer().requestHandler(router).listen(ADMIN_STUB_PORT).onComplete(ar -> latch.countDown());
         await(latch);
 
         webClient = WebClient.create(vertx);
+        final SessionServiceProxy sessionProxy = new SessionServiceProxy(webClient, HOST, ADMIN_STUB_PORT);
         proxy = new DeliveryServiceProxy(
-                vertx, webClient, HOST, ADMIN_STUB_PORT, ADMIN_STUB_PORT, KafkaTestSupport.brokerAddress());
+                vertx, webClient, sessionProxy, HOST, ADMIN_STUB_PORT, ADMIN_STUB_PORT,
+                KafkaTestSupport.brokerAddress());
 
        try {
             Thread.sleep(5000);
@@ -75,7 +85,7 @@ class DeliveryServiceProxyIntegrationTest {
 
     @Test
     void createDeliveryForwardsBodyAndReturnsStatusAndPayload() {
-        final JsonObject result = proxy.createDelivery(new JsonObject().put("weight", 2.0).put("senderId", "user-1"));
+        final JsonObject result = proxy.createDelivery(new JsonObject().put("weight", 2.0), "user-1");
 
         assertEquals(201, result.getInteger("_statusCode"));
         assertEquals("DLV-1", result.getString("deliveryId"));
@@ -85,7 +95,7 @@ class DeliveryServiceProxyIntegrationTest {
 
     @Test
     void createDeliveryMapsAValidationRejectionTo422() {
-        final JsonObject result = proxy.createDelivery(new JsonObject().put("weight", 12.0).put("senderId", "user-1"));
+        final JsonObject result = proxy.createDelivery(new JsonObject().put("weight", 12.0), "user-1");
 
         assertEquals(422, result.getInteger("_statusCode"));
         assertEquals("No drone can carry this package", result.getString("error"));
@@ -112,10 +122,25 @@ class DeliveryServiceProxyIntegrationTest {
 
     @Test
     void viewFleetWrapsTheDownstreamArray() {
-        final JsonObject result = proxy.viewFleet();
+        final JsonObject result = proxy.viewFleet("user-1");
         final JsonArray fleet = result.getJsonArray("fleet");
         assertEquals(1, fleet.size());
         assertEquals("DRN-1", fleet.getJsonObject(0).getString("droneId"));
+    }
+
+    @Test
+    void viewFleetPropagatesTheSessionIdAsHeaderToTheAdminEndpoint() {
+        proxy.viewFleet("sess-42");
+        assertEquals("sess-42", lastFleetSessionHeader.get(),
+                "the gateway must propagate the identity as X-Session-Id on the admin views");
+    }
+
+    @Test
+    void trackDeliveryCapturesTheOwnerAccountFromIntrospection() {
+        proxy.trackDelivery("DLV-9", "sess-owner");
+        assertEquals(Optional.of("acc-sess-owner"),
+                proxy.ownerFor(FakeDeliveryKafka.trackingSessionFor("DLV-9")),
+                "the owner captured for a tracking session must be the introspected accountId of the tracker");
     }
 
     private static void await(final CountDownLatch latch) {

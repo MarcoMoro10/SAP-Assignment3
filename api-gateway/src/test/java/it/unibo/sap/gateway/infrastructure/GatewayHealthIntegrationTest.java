@@ -5,9 +5,6 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
-import it.unibo.sap.gateway.application.SessionService;
-import it.unibo.sap.gateway.application.SessionServiceImpl;
-import it.unibo.sap.gateway.support.FakeAccountService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -34,6 +31,7 @@ class GatewayHealthIntegrationTest {
     private static final int ACCOUNT_STUB_PORT = 9406;
     private static final int DELIVERY_STUB_PORT = 9407;
     private static final int GATEWAY_PORT = 9408;
+    private static final int SESSION_STUB_PORT = 9409;
 
     private static final AtomicBoolean deliveryHealthy = new AtomicBoolean(true);
 
@@ -45,6 +43,7 @@ class GatewayHealthIntegrationTest {
         vertx = Vertx.vertx();
         startStubHealthServer(ACCOUNT_STUB_PORT, () -> true);
         startStubHealthServer(DELIVERY_STUB_PORT, deliveryHealthy::get);
+        startStubHealthServer(SESSION_STUB_PORT, () -> true);
         startGateway();
         webClient = WebClient.create(vertx);
     }
@@ -77,12 +76,13 @@ class GatewayHealthIntegrationTest {
         final WebClient gatewayClient = WebClient.create(vertx);
         final AccountServiceProxy accountProxy =
                 new AccountServiceProxy(gatewayClient, HOST, ACCOUNT_STUB_PORT);
+        final SessionServiceProxy sessionProxy =
+                new SessionServiceProxy(gatewayClient, HOST, SESSION_STUB_PORT);
         final DeliveryServiceProxy deliveryProxy = new DeliveryServiceProxy(
-                vertx, gatewayClient, HOST, DELIVERY_STUB_PORT, DELIVERY_STUB_PORT,
+                vertx, gatewayClient, sessionProxy, HOST, DELIVERY_STUB_PORT, DELIVERY_STUB_PORT,
                 it.unibo.sap.gateway.support.KafkaTestSupport.brokerAddress());
-        final SessionService service = new SessionServiceImpl(
-                new FakeAccountService(), deliveryProxy, new InMemorySessionRepository());
-        final var controller = new APIGatewayController(service, accountProxy, deliveryProxy, HOST, GATEWAY_PORT);
+        final var controller = new APIGatewayController(
+                accountProxy, deliveryProxy, sessionProxy, HOST, GATEWAY_PORT);
 
         final CountDownLatch latch = new CountDownLatch(1);
         vertx.deployVerticle(controller).onComplete(ar -> latch.countDown());
@@ -99,6 +99,7 @@ class GatewayHealthIntegrationTest {
         final Map<String, String> checks = checksByName(body.getJsonArray("checks"));
         assertEquals("UP", checks.get("account-service"));
         assertEquals("UP", checks.get("delivery-service"));
+        assertEquals("UP", checks.get("session-service"));
     }
 
     @Test

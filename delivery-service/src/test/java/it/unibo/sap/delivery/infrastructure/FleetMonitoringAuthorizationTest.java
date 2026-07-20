@@ -83,14 +83,11 @@ class FleetMonitoringAuthorizationTest {
 
     @Test
     void anAdminMaySeeTheFleetView() throws Exception {
-        assertEquals(200, getFleet("admin-1").statusCode());        // FakeSessionValidator => ADMIN
+        assertEquals(200, getFleet("admin-1").statusCode());
     }
 
     @Test
-    void withoutAnIdentityTheAdminViewIsALegacyPassThrough() throws Exception {
-        // TRANSITIONAL (STEP 5): no X-Session-Id => pass-through (the gateway does not yet propagate
-        // identity on admin routes). When STEP 6 makes requireRole strict, this MUST become 401 —
-        // this assertion is the tripwire that the transition has been closed.
-        assertEquals(200, getFleet(null).statusCode());
+    void withoutAnIdentityTheAdminViewIsRejected() throws Exception {
+        assertEquals(401, getFleet(null).statusCode());
     }
 }

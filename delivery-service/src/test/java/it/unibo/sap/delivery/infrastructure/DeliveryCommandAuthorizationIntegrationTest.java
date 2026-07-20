@@ -131,9 +131,10 @@ class DeliveryCommandAuthorizationIntegrationTest {
     }
 
     @Test
-    void legacySenderIdPathIsUnchanged() throws Exception {
-        final JsonObject reply = postCreate(Map.of("senderId", "user-1"));     // no sessionId => legacy
-        assertEquals(Boolean.FALSE, reply.getBoolean("__rejected"), "the legacy senderId path still works");
-        assertEquals("IN_PROGRESS", reply.getString("status"));
+    void missingIdentityIsRejectedAsUnauthorized() throws Exception {
+        final JsonObject reply = postCreate(Map.of("senderId", "user-1"));     // no sessionId at all
+        assertEquals(Boolean.TRUE, reply.getBoolean("__rejected"));
+        assertEquals("UNAUTHORIZED", reply.getString("errorType"), "explicit 401, not a silent success");
+        assertEquals("Missing session identity", reply.getString("reason"));
     }
 }

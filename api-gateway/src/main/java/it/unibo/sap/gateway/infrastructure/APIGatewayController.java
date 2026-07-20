@@ -12,9 +12,6 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import it.unibo.sap.common.hexagonal.InputAdapter;
 import it.unibo.sap.gateway.application.ControllerObserver;
-import it.unibo.sap.gateway.application.SessionService;
-import it.unibo.sap.gateway.domain.Session;
-import it.unibo.sap.gateway.domain.SessionId;
 import it.unibo.sap.gateway.kafka.InputEventChannel;
 
 import java.util.Optional;
@@ -24,31 +21,31 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
 
     private static final String TRACK_PREFIX = "/api/v1/track/";
 
-    private final SessionService sessionService;
     private final AccountServiceProxy accountServiceProxy;
     private final DeliveryServiceProxy deliveryServiceProxy;
+    private final SessionServiceProxy sessionServiceProxy;
     private final String publicHost;
     private final int port;
     private final ControllerObserver observer;
 
-    public APIGatewayController(final SessionService sessionService,
-                                final AccountServiceProxy accountServiceProxy,
+    public APIGatewayController(final AccountServiceProxy accountServiceProxy,
                                 final DeliveryServiceProxy deliveryServiceProxy,
+                                final SessionServiceProxy sessionServiceProxy,
                                 final String publicHost,
                                 final int port) {
-        this(sessionService, accountServiceProxy, deliveryServiceProxy, publicHost, port,
+        this(accountServiceProxy, deliveryServiceProxy, sessionServiceProxy, publicHost, port,
                 ControllerObserver.NO_OP);
     }
 
-    public APIGatewayController(final SessionService sessionService,
-                                final AccountServiceProxy accountServiceProxy,
+    public APIGatewayController(final AccountServiceProxy accountServiceProxy,
                                 final DeliveryServiceProxy deliveryServiceProxy,
+                                final SessionServiceProxy sessionServiceProxy,
                                 final String publicHost,
                                 final int port,
                                 final ControllerObserver observer) {
-        this.sessionService = sessionService;
         this.accountServiceProxy = accountServiceProxy;
         this.deliveryServiceProxy = deliveryServiceProxy;
+        this.sessionServiceProxy = sessionServiceProxy;
         this.publicHost = publicHost;
         this.port = port;
         this.observer = observer;
@@ -113,13 +110,15 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
     private void handleHealth(final RoutingContext ctx) {
         final Future<Boolean> account = accountServiceProxy.pingHealth();
         final Future<Boolean> delivery = deliveryServiceProxy.pingHealth();
-        Future.all(account, delivery).onComplete(ar -> {
-            final boolean accountUp = Boolean.TRUE.equals(account.result());
-            final boolean deliveryUp = Boolean.TRUE.equals(delivery.result());
-            final boolean ready = accountUp && deliveryUp;
+        final Future<Boolean> session = sessionServiceProxy.pingHealth();
+        Future.all(account, delivery, session).onComplete(ar -> {
+            final boolean ready = Boolean.TRUE.equals(account.result())
+                    && Boolean.TRUE.equals(delivery.result())
+                    && Boolean.TRUE.equals(session.result());
             final JsonArray checks = new JsonArray()
                     .add(check("account-service", account.result()))
-                    .add(check("delivery-service", delivery.result()));
+                    .add(check("delivery-service", delivery.result()))
+                    .add(check("session-service", session.result()));
             ctx.response().setStatusCode(ready ? 200 : 503)
                     .putHeader("Content-Type", "application/json")
                     .end(new JsonObject().put("status", ready ? "UP" : "DOWN").put("checks", checks).encode());
@@ -137,12 +136,44 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
             return;
         }
         final String trackingSessionId = path.substring(TRACK_PREFIX.length());
-        final AtomicBoolean relayOpened = new AtomicBoolean(false);
-        clientSocket.textMessageHandler(firstFrame -> {
-            if (relayOpened.compareAndSet(false, true)) {
-                openTrackingBridge(clientSocket, trackingSessionId);
+        final String sessionId = queryParam(clientSocket.query(), "sessionId");
+        if (sessionId == null || sessionId.isBlank()) {
+            clientSocket.reject();
+            return;
+        }
+        clientSocket.pause();
+        vertx.executeBlocking(() -> sessionServiceProxy.introspect(sessionId), false)
+                .onComplete(ar -> {
+                    final Optional<String> callerAccount = ar.succeeded() && ar.result() != null
+                            ? ar.result().map(SessionServiceProxy.ValidatedCaller::accountId)
+                            : Optional.empty();
+                    final Optional<String> owner = deliveryServiceProxy.ownerFor(trackingSessionId);
+                    if (callerAccount.isPresent() && owner.isPresent()
+                            && callerAccount.get().equals(owner.get())) {
+                        final AtomicBoolean relayOpened = new AtomicBoolean(false);
+                        clientSocket.textMessageHandler(firstFrame -> {
+                            if (relayOpened.compareAndSet(false, true)) {
+                                openTrackingBridge(clientSocket, trackingSessionId);
+                            }
+                        });
+                        clientSocket.resume();
+                    } else {
+                        clientSocket.close((short) 1008, "Unauthorized tracking session");
+                    }
+                });
+    }
+
+    private static String queryParam(final String query, final String name) {
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+        for (final String pair : query.split("&")) {
+            final int eq = pair.indexOf('=');
+            if (eq > 0 && name.equals(pair.substring(0, eq))) {
+                return java.net.URLDecoder.decode(pair.substring(eq + 1), java.nio.charset.StandardCharsets.UTF_8);
             }
-        });
+        }
+        return null;
     }
 
     private void openTrackingBridge(final ServerWebSocket clientSocket, final String trackingSessionId) {
@@ -206,94 +237,79 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
                     .end(new JsonObject().put("error", "Missing username or password").encode());
             return;
         }
-        vertx.executeBlocking(() -> {
-            final Session session = sessionService.login(username, password);
-            final JsonObject links = new JsonObject();
-            final String base = "/api/v1/user-sessions/" + session.getId().value();
-            if ("SENDER".equals(session.getRole())) {
-                links.put("createDeliveryLink", base + "/create-delivery");
-                links.put("trackDeliveryLink", base + "/track-delivery");
-            } else if ("ADMIN".equals(session.getRole())) {
-                links.put("fleetLink", base + "/admin/fleet");
-                links.put("schedulingLink", base + "/admin/scheduling");
-            }
-            return new JsonObject()
-                    .put("sessionId", session.getId().value())
-                    .put("accountId", session.getAccountId())
-                    .put("role", session.getRole())
-                    .put("links", links);
-        }, false).onComplete(ar -> {
-            if (ar.succeeded()) {
-                ctx.response().setStatusCode(200)
-                        .putHeader("Content-Type", "application/json")
-                        .end(ar.result().encode());
-            } else {
-                ctx.response().setStatusCode(401)
-                        .end(new JsonObject().put("error", causeMessage(ar.cause())).encode());
-            }
-        });
+        vertx.executeBlocking(() -> sessionServiceProxy.login(username, password), false)
+                .onComplete(ar -> {
+                    if (ar.succeeded()) {
+                        writeWithEmbeddedStatus(ctx, ar.result(), 200);
+                    } else {
+                        ctx.response().setStatusCode(502)
+                                .putHeader("Content-Type", "application/json")
+                                .end(new JsonObject().put("error", causeMessage(ar.cause())).encode());
+                    }
+                });
     }
 
     private void handleCreateDelivery(final RoutingContext ctx) {
-        final SessionId sessionId = SessionId.of(ctx.pathParam("sessionId"));
+        final String sessionId = ctx.pathParam("sessionId");
         final JsonObject body = ctx.body().asJsonObject();
-        dispatch(ctx, () -> sessionService.createDelivery(sessionId, body),
+        dispatch(ctx, () -> deliveryServiceProxy.createDelivery(body, sessionId),
                 result -> writeWithEmbeddedStatus(ctx, result, 201));
     }
 
     private void handleCancelDelivery(final RoutingContext ctx) {
-        final SessionId sessionId = SessionId.of(ctx.pathParam("sessionId"));
+        final String sessionId = ctx.pathParam("sessionId");
         final JsonObject body = ctx.body().asJsonObject();
         final String deliveryId = body == null ? null : body.getString("deliveryId");
-        dispatch(ctx, () -> sessionService.cancelDelivery(sessionId, deliveryId),
+        dispatch(ctx, () -> deliveryServiceProxy.cancelDelivery(deliveryId, sessionId),
                 result -> writeWithEmbeddedStatus(ctx, result, 200));
     }
 
     private void handleTrackDelivery(final RoutingContext ctx) {
-        final SessionId sessionId = SessionId.of(ctx.pathParam("sessionId"));
+        final String sessionId = ctx.pathParam("sessionId");
         final JsonObject body = ctx.body().asJsonObject();
         final String deliveryId = body == null ? null : body.getString("deliveryId");
-        dispatch(ctx, () -> sessionService.trackDelivery(sessionId, deliveryId),
+        dispatch(ctx, () -> deliveryServiceProxy.trackDelivery(deliveryId, sessionId),
                 result -> {
                     final int status = result.containsKey("_statusCode")
                             ? result.getInteger("_statusCode") : 200;
                     result.remove("_statusCode");
                     if (status >= 200 && status < 300) {
-                        writeJson(ctx, 200, rewriteTrackingUrl(result));
+                        writeJson(ctx, 200, rewriteTrackingUrl(result, sessionId));
                     } else {
                         writeJson(ctx, status, result);
                     }
                 });
     }
 
-    private JsonObject rewriteTrackingUrl(final JsonObject deliveryResponse) {
+    private JsonObject rewriteTrackingUrl(final JsonObject deliveryResponse, final String sessionId) {
         final String trackingSessionId = deliveryResponse.getString("trackingSessionId");
         if (trackingSessionId == null || trackingSessionId.isBlank()) {
             return deliveryResponse.copy();
         }
         return deliveryResponse.copy()
-                .put("webSocketUrl", "ws://" + publicHost + ":" + port + TRACK_PREFIX + trackingSessionId);
+                .put("webSocketUrl", "ws://" + publicHost + ":" + port + TRACK_PREFIX
+                        + trackingSessionId + "?sessionId=" + sessionId);
     }
 
     private void handleGetDelivery(final RoutingContext ctx) {
-        final SessionId sessionId = SessionId.of(ctx.pathParam("sessionId"));
+        final String sessionId = ctx.pathParam("sessionId");
         final String deliveryId = ctx.pathParam("deliveryId");
-        dispatch(ctx, () -> sessionService.getDelivery(sessionId, deliveryId),
+        dispatch(ctx, () -> deliveryServiceProxy.getDelivery(deliveryId, sessionId),
                 opt -> opt.ifPresentOrElse(
                         delivery -> writeJson(ctx, 200, delivery),
                         () -> writeJson(ctx, 404, new JsonObject().put("error", "Delivery not found"))));
     }
 
     private void handleViewFleet(final RoutingContext ctx) {
-        final SessionId sessionId = SessionId.of(ctx.pathParam("sessionId"));
-        dispatch(ctx, () -> sessionService.viewFleet(sessionId),
+        final String sessionId = ctx.pathParam("sessionId");
+        dispatch(ctx, () -> deliveryServiceProxy.viewFleet(sessionId),
                 result -> writeJsonArray(ctx, result, "fleet"));
     }
 
     private void handleViewScheduling(final RoutingContext ctx) {
-        final SessionId sessionId = SessionId.of(ctx.pathParam("sessionId"));
+        final String sessionId = ctx.pathParam("sessionId");
         final String droneId = ctx.queryParams().get("droneId");
-        dispatch(ctx, () -> sessionService.viewScheduling(sessionId, droneId),
+        dispatch(ctx, () -> deliveryServiceProxy.viewScheduling(droneId, sessionId),
                 result -> writeJsonArray(ctx, result, "scheduling"));
     }
 
@@ -325,6 +341,11 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
     }
 
     private void writeJsonArray(final RoutingContext ctx, final JsonObject wrapper, final String key) {
+        if (wrapper.containsKey("_statusCode")) {
+            final int statusCode = wrapper.getInteger("_statusCode");
+            writeJson(ctx, statusCode, new JsonObject().put("error", wrapper.getString("error", "Error")));
+            return;
+        }
         ctx.response().setStatusCode(200)
                 .putHeader("Content-Type", "application/json")
                 .end(wrapper.getJsonArray(key).encode());

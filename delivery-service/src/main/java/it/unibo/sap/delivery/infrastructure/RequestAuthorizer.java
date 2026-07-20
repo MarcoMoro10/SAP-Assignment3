@@ -42,16 +42,7 @@ public class RequestAuthorizer {
 
     public Handler<RoutingContext> requireRole(final String requiredRole) {
         return ctx -> {
-            final String sessionId = ctx.request().getHeader(SESSION_ID_HEADER);
-            // TRANSITIONAL (STEP 5): the gateway does not yet propagate identity on the admin routes,
-            // so a missing header is a legacy pass-through (keeps fleet/scheduling views working
-            // end-to-end). STEP 6 makes this strict (A2 behaviour): remove this branch so a missing
-            // header yields 401 "Missing session identity".
-            if (sessionId == null || sessionId.isBlank()) {
-                ctx.next();
-                return;
-            }
-            final AuthResult result = authorize(sessionId, requiredRole);
+            final AuthResult result = authorize(ctx.request().getHeader(SESSION_ID_HEADER), requiredRole);
             if (result instanceof AuthResult.Authorized ok) {
                 ctx.put(CALLER_ACCOUNT_ID, ok.accountId());
                 ctx.next();
