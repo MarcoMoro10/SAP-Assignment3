@@ -26,6 +26,15 @@ spec:
           env:
             - name: EV_CHANNELS_LOCATION    # broker Kafka via DNS del Service "broker"
               value: "broker:9092"
+            - name: SESSION_HOST
+              value: "session-service"
+            - name: SESSION_PORT
+              value: "9001"
+            - name: DELIVERY_EVENTS_FILE    # relative to WORKDIR /project -> /project/data (the PVC mount)
+              value: "data/delivery-events.json"
+          volumeMounts:
+            - name: delivery-data
+              mountPath: /project/data
           livenessProbe:
             httpGet:
               path: /api/v1/health
@@ -42,6 +51,24 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 4
+      volumes:
+        - name: delivery-data
+          persistentVolumeClaim:
+            claimName: delivery-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: delivery-data
+  namespace: shipping-on-the-air
+  labels:
+    app: delivery-service
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 256Mi
 ---
 apiVersion: v1
 kind: Service

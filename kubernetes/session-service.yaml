@@ -1,30 +1,35 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: account-service
+  name: session-service
   namespace: shipping-on-the-air
   labels:
-    app: account-service
+    app: session-service
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: account-service
+      app: session-service
   template:
     metadata:
       labels:
-        app: account-service
+        app: session-service
     spec:
       containers:
-        - name: account-service
-          image: account-service
+        - name: session-service
+          image: session-service
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 9000
+            - containerPort: 9001
+          env:
+            - name: ACCOUNT_HOST
+              value: "account-service"
+            - name: ACCOUNT_PORT
+              value: "9000"
           livenessProbe:
             httpGet:
               path: /api/v1/health
-              port: 9000
+              port: 9001
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 2
@@ -32,45 +37,24 @@ spec:
           readinessProbe:
             httpGet:
               path: /api/v1/health
-              port: 9000
+              port: 9001
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 3
-          volumeMounts:
-            - name: account-data
-              mountPath: /project/data
-      volumes:
-        - name: account-data
-          persistentVolumeClaim:
-            claimName: account-data
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: account-data
-  namespace: shipping-on-the-air
-  labels:
-    app: account-service
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 128Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: account-service
+  name: session-service
   namespace: shipping-on-the-air
   labels:
-    app: account-service
+    app: session-service
 spec:
   type: ClusterIP
   selector:
-    app: account-service
+    app: session-service
   ports:
     - name: http
-      port: 9000
-      targetPort: 9000
+      port: 9001
+      targetPort: 9001

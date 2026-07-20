@@ -44,9 +44,10 @@ public class DeliveryServiceMain {
         final RequestAuthorizer authorizer = new RequestAuthorizer(
                 new SessionValidatorProxy(webClient, sessionHost, sessionPort));
 
+        final String storeFile = Env.get("DELIVERY_EVENTS_FILE", FileBasedEventStore.DEFAULT_FILE);
         final EventStore eventStore = Env.getBoolean("DELIVERY_RESET_STORE", false)
-                ? FileBasedEventStore.resetting()
-                : new FileBasedEventStore();
+                ? FileBasedEventStore.resetting(storeFile)
+                : new FileBasedEventStore(storeFile);
         final DeliveryRepository deliveryRepository = new EventSourcedDeliveryRepository(eventStore);
         final TrackingSessionRegistry trackingRegistry = new InMemoryTrackingSessionRegistry();
         final GeocodingPort geocoding = new GeocodingService();

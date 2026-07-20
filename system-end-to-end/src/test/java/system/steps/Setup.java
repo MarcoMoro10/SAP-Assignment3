@@ -20,12 +20,14 @@ public abstract class Setup {
     public static final int GATEWAY_PORT = 8080;
     public static final int GATEWAY_METRICS_PORT = 9401;
     public static final int DELIVERY_METRICS_PORT = 9400;
+    public static final int DELIVERY_ADMIN_PORT = 9003;   // delivery admin HTTP, reachable bypassing the gateway
     public static final String NETWORK_FILTER = "shipping_network";
 
     public static final String ADMIN_USERNAME = "admin-1";
     public static final String ADMIN_PASSWORD = "Admin#123";
 
     private static final String HEALTH_URL = "http://" + HOST + ":" + GATEWAY_PORT + "/api/v1/health/live";
+    private static final String READINESS_URL = "http://" + HOST + ":" + GATEWAY_PORT + "/api/v1/health";
     private static final String LOGIN_URL = "http://" + HOST + ":" + GATEWAY_PORT + "/api/v1/login";
     private static final Duration STARTUP_TIMEOUT = Duration.ofMinutes(5);
     private static final long POLL_INTERVAL_MS = 2_000;
@@ -43,6 +45,7 @@ public abstract class Setup {
         }
         if (isGatewayHealthy()) {
             startedByUs = false;
+            awaitSystemReady();
             initialized = true;
             System.out.println("[e2e] system already up — reusing it (no teardown).");
             return;
@@ -53,7 +56,32 @@ public abstract class Setup {
         startedByUs = true;
         Runtime.getRuntime().addShutdownHook(new Thread(Setup::tearDownIfStarted));
         pollHealthUntilUp();
+        awaitSystemReady();
         initialized = true;
+    }
+
+    private static void awaitSystemReady() {
+        final long deadline = System.currentTimeMillis() + STARTUP_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            if (isSystemReady()) {
+                System.out.println("[e2e] all downstreams ready (account, delivery, session).");
+                return;
+            }
+            sleep(POLL_INTERVAL_MS);
+        }
+        throw new IllegalStateException(
+                "Downstreams (incl. session-service) did not become ready within " + STARTUP_TIMEOUT);
+    }
+
+    public static boolean isSystemReady() {
+        try {
+            final HttpResponse<String> resp = HTTP.send(
+                    HttpRequest.newBuilder(URI.create(READINESS_URL)).timeout(Duration.ofSeconds(5)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            return resp.statusCode() == 200;
+        } catch (final Exception e) {
+            return false;
+        }
     }
 
     private static void tearDownIfStarted() {
