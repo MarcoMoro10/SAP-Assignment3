@@ -27,6 +27,8 @@ spec:
               value: "account-service"
             - name: DELIVERY_HOST
               value: "delivery-service"
+            - name: SESSION_HOST
+              value: "session-service"
             - name: EV_CHANNELS_LOCATION
               value: "broker:9092"
           livenessProbe:

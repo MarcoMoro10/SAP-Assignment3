@@ -36,6 +36,26 @@ services:
     networks: [shipping_network]
     ports:
       - "9000:9000"
+    environment:
+      - ACCOUNT_STORE_FILE=data/accounts.json
+      - ACCOUNT_RESET_STORE=false
+    volumes:
+      - account-data:/project/data
+    restart: always
+
+  session-service:
+    build:
+      context: ./session-service
+    image: session-service
+    container_name: session-service
+    networks: [shipping_network]
+    ports:
+      - "9001:9001"
+    environment:
+      - ACCOUNT_HOST=account-service
+      - ACCOUNT_PORT=9000
+    depends_on:
+      - account-service
     restart: always
 
   delivery-service:
@@ -48,8 +68,18 @@ services:
       - "9002:9002"
       - "9003:9003"
       - "9400:9400"
+    environment:
+      - DELIVERY_RESET_STORE=false
+
+      - DELIVERY_EVENTS_FILE=data/delivery-events.json
+      - SESSION_HOST=session-service
+      - SESSION_PORT=9001
+    volumes:
+      - delivery-data:/project/data
     depends_on:
       - kafka
+      - session-service
+    restart: always
 
   api-gateway:
     build:
@@ -63,9 +93,12 @@ services:
     environment:
       - ACCOUNT_HOST=account-service
       - DELIVERY_HOST=delivery-service
+      - SESSION_HOST=session-service
+      - SESSION_PORT=9001
     depends_on:
       - account-service
       - delivery-service
+      - session-service
       - kafka
     healthcheck:
       test: curl --fail http://api-gateway:8080/api/v1/health/live || exit 1
@@ -103,3 +136,7 @@ services:
 networks:
   shipping_network:
     driver: bridge
+
+volumes:
+  account-data:
+  delivery-data:

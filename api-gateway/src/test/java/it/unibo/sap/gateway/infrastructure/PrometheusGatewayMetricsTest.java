@@ -3,9 +3,6 @@ package it.unibo.sap.gateway.infrastructure;
 import io.prometheus.metrics.model.registry.PrometheusRegistry;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.client.WebClient;
-import it.unibo.sap.gateway.application.SessionService;
-import it.unibo.sap.gateway.application.SessionServiceImpl;
-import it.unibo.sap.gateway.support.FakeAccountService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -45,13 +42,13 @@ class PrometheusGatewayMetricsTest {
         observer = new PrometheusControllerObserver(new PrometheusRegistry(), GW_METRICS_PORT);
         final AccountServiceProxy accountProxy =
                 new AccountServiceProxy(WebClient.create(vertx), HOST, DEAD_PORT);
+        final SessionServiceProxy sessionProxy =
+                new SessionServiceProxy(WebClient.create(vertx), HOST, DEAD_PORT);
         final DeliveryServiceProxy deliveryProxy = new DeliveryServiceProxy(
-                vertx, WebClient.create(vertx), HOST, DEAD_PORT, DEAD_PORT,
+                vertx, WebClient.create(vertx), sessionProxy, HOST, DEAD_PORT, DEAD_PORT,
                 it.unibo.sap.gateway.support.KafkaTestSupport.brokerAddress());
-        final SessionService service = new SessionServiceImpl(
-                new FakeAccountService(), deliveryProxy, new InMemorySessionRepository());
         final var controller = new APIGatewayController(
-                service, accountProxy, deliveryProxy, HOST, GW_PORT, observer);
+                accountProxy, deliveryProxy, sessionProxy, HOST, GW_PORT, observer);
 
         final CountDownLatch latch = new CountDownLatch(1);
         vertx.deployVerticle(controller).onComplete(ar -> latch.countDown());

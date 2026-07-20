@@ -18,8 +18,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
+
+    private static final String SESSION_ID_HEADER = "X-Session-Id";
 
     // Canali statici di input
     private static final String CH_CREATE_REQUESTS = "create-delivery-requests";
@@ -37,6 +40,7 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
 
     private final Vertx vertx;
     private final WebClient webClient;
+    private final SessionServiceProxy sessionServiceProxy;
     private final String host;
     private final int port;
     private final int fleetPort;
@@ -46,18 +50,24 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     private final Map<String, Promise<JsonObject>> pending = new ConcurrentHashMap<>();
     private final Map<String, InputEventChannel> subscriptions = new ConcurrentHashMap<>();
     private final Map<String, OutputEventChannel> outChannels = new ConcurrentHashMap<>();
-    // TrackingSessionId (client/EventBus) -> deliveryId (Kafka).
-    private final Map<String, String> sessionToDelivery = new ConcurrentHashMap<>();
+    // TrackingSessionId (client/EventBus) -> (deliveryId, ownerAccountId) captured at track time.
+    private final Map<String, TrackedDelivery> sessionToDelivery = new ConcurrentHashMap<>();
 
-    public DeliveryServiceProxy(final Vertx vertx, final WebClient webClient, final String host,
+    final AtomicInteger eventChannelsOpened = new AtomicInteger();
+
+    public DeliveryServiceProxy(final Vertx vertx, final WebClient webClient,
+                                final SessionServiceProxy sessionServiceProxy, final String host,
                                 final int port, final int fleetPort, final String eventChannelsLocation) {
         this.vertx = vertx;
         this.webClient = webClient;
+        this.sessionServiceProxy = sessionServiceProxy;
         this.host = host;
         this.port = port;
         this.fleetPort = fleetPort;
         this.address = eventChannelsLocation;
     }
+
+    public record TrackedDelivery(String deliveryId, String ownerAccountId) { }
 
     public Future<Boolean> pingHealth() {
         return webClient.get(port, host, "/api/v1/health")
@@ -67,32 +77,32 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     }
 
     @Override
-    public JsonObject createDelivery(final JsonObject request) {
+    public JsonObject createDelivery(final JsonObject request, final String sessionId) {
         final JsonObject reply = requestReply(CH_CREATE_REQUESTS, CH_CREATE_APPROVED, CH_CREATE_REJECTED,
-                request.copy());
+                request.copy().put("sessionId", sessionId));
         return isApproved(reply)
                 ? clean(reply).put("_statusCode", 201)
                 : rejectedBody(reply, mapCreateStatus(reply.getString("errorType")));
     }
 
     @Override
-    public JsonObject cancelDelivery(final String deliveryId, final String senderId) {
+    public JsonObject cancelDelivery(final String deliveryId, final String sessionId) {
         final JsonObject reply = requestReply(CH_CANCEL_REQUESTS,
                 dyn("cancel-delivery-", deliveryId, "-requests-approved"),
                 dyn("cancel-delivery-", deliveryId, "-requests-rejected"),
-                new JsonObject().put("deliveryId", deliveryId).put("senderId", senderId));
+                new JsonObject().put("deliveryId", deliveryId).put("sessionId", sessionId));
         return isApproved(reply)
                 ? clean(reply).put("_statusCode", 200)
                 : rejectedBody(reply, mapCancelStatus(reply.getString("errorType")));
     }
 
     @Override
-    public Optional<JsonObject> getDelivery(final String deliveryId, final String senderId) {
+    public Optional<JsonObject> getDelivery(final String deliveryId, final String sessionId) {
         try {
             final JsonObject reply = requestReply(CH_GET_DETAIL_REQUESTS,
                     dyn("get-delivery-", deliveryId, "-detail-requests-approved"),
                     dyn("get-delivery-", deliveryId, "-detail-requests-rejected"),
-                    new JsonObject().put("deliveryId", deliveryId).put("senderId", senderId));
+                    new JsonObject().put("deliveryId", deliveryId).put("sessionId", sessionId));
             return isApproved(reply) ? Optional.of(clean(reply)) : Optional.empty();
         } catch (final RuntimeException e) {
             return Optional.empty();
@@ -100,49 +110,51 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     }
 
     @Override
-    public JsonObject trackDelivery(final String deliveryId, final String senderId) {
+    public JsonObject trackDelivery(final String deliveryId, final String sessionId) {
         final JsonObject reply = requestReply(CH_TRACK_REQUESTS,
                 dyn("delivery-", deliveryId, "-tracking-requests-approved"),
                 dyn("delivery-", deliveryId, "-tracking-requests-rejected"),
-                new JsonObject().put("deliveryId", deliveryId).put("senderId", senderId));
+                new JsonObject().put("deliveryId", deliveryId).put("sessionId", sessionId));
         if (isApproved(reply)) {
             final JsonObject body = clean(reply);
             final String trackingSessionId = body.getString("trackingSessionId");
             if (trackingSessionId != null) {
-                sessionToDelivery.put(trackingSessionId, deliveryId);
+                final String ownerAccountId = sessionServiceProxy.introspect(sessionId)
+                        .map(SessionServiceProxy.ValidatedCaller::accountId).orElse(null);
+                sessionToDelivery.put(trackingSessionId, new TrackedDelivery(deliveryId, ownerAccountId));
             }
             return body.put("_statusCode", 201);
         }
         return rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
     }
 
-    public JsonObject stopTracking(final String deliveryId, final String senderId) {
+    public JsonObject stopTracking(final String deliveryId, final String sessionId) {
         final JsonObject reply = requestReply(CH_STOP_TRACKING_REQUESTS,
                 dyn("stop-tracking-", deliveryId, "-requests-approved"),
                 dyn("stop-tracking-", deliveryId, "-requests-rejected"),
-                new JsonObject().put("deliveryId", deliveryId).put("senderId", senderId));
+                new JsonObject().put("deliveryId", deliveryId).put("sessionId", sessionId));
         return isApproved(reply)
                 ? clean(reply).put("_statusCode", 200)
                 : rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
     }
 
     @Override
-    public JsonObject viewFleet() {
-        return httpGetArray(fleetPort, "/api/v1/admin/fleet", "fleet");
+    public JsonObject viewFleet(final String sessionId) {
+        return httpGetArray(fleetPort, "/api/v1/admin/fleet", "fleet", sessionId);
     }
 
     @Override
-    public JsonObject viewScheduling(final String droneId) {
+    public JsonObject viewScheduling(final String droneId, final String sessionId) {
         String path = "/api/v1/admin/scheduling";
         if (droneId != null && !droneId.isBlank()) {
             path += "?droneId=" + droneId;
         }
-        return httpGetArray(fleetPort, path, "scheduling");
+        return httpGetArray(fleetPort, path, "scheduling", sessionId);
     }
 
     public InputEventChannel createAnEventChannel(final String deliveryId,
                                                   final String trackingSessionId) {
-
+        eventChannelsOpened.incrementAndGet();
         final InputEventChannel channel = new InputEventChannel(
                 vertx, "delivery-tracking-" + deliveryId + "-external-events", address,
                 INSTANCE_GROUP, "latest");
@@ -151,7 +163,17 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     }
 
     public Optional<String> deliveryIdFor(final String trackingSessionId) {
-        return Optional.ofNullable(sessionToDelivery.get(trackingSessionId));
+        return Optional.ofNullable(sessionToDelivery.get(trackingSessionId)).map(TrackedDelivery::deliveryId);
+    }
+
+    public Optional<String> ownerFor(final String trackingSessionId) {
+        return Optional.ofNullable(sessionToDelivery.get(trackingSessionId))
+                .map(TrackedDelivery::ownerAccountId);
+    }
+
+    void rememberTrackedDelivery(final String trackingSessionId, final String deliveryId,
+                                 final String ownerAccountId) {
+        sessionToDelivery.put(trackingSessionId, new TrackedDelivery(deliveryId, ownerAccountId));
     }
 
     public void forgetTrackingSession(final String trackingSessionId) {
@@ -213,15 +235,24 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         return outChannels.computeIfAbsent(channel, c -> new OutputEventChannel(vertx, c, address));
     }
 
-    private JsonObject httpGetArray(final int p, final String path, final String key) {
+    private JsonObject httpGetArray(final int p, final String path, final String key, final String sessionId) {
         final CompletableFuture<JsonObject> future = new CompletableFuture<>();
-        webClient.get(p, host, path).timeout(ADMIN_TIMEOUT_MS).send(ar -> {
-            if (ar.succeeded()) {
-                future.complete(new JsonObject().put(key, ar.result().bodyAsJsonArray()));
-            } else {
-                future.completeExceptionally(ar.cause());
-            }
-        });
+        webClient.get(p, host, path)
+                .putHeader(SESSION_ID_HEADER, sessionId)
+                .timeout(ADMIN_TIMEOUT_MS).send(ar -> {
+                    if (ar.succeeded()) {
+                        final int status = ar.result().statusCode();
+                        if (status == 200) {
+                            future.complete(new JsonObject().put(key, ar.result().bodyAsJsonArray()));
+                        } else {
+                            future.complete(new JsonObject()
+                                    .put("_statusCode", status)
+                                    .put("error", errorMessage(ar.result().bodyAsString(), status)));
+                        }
+                    } else {
+                        future.completeExceptionally(ar.cause());
+                    }
+                });
         try {
             return future.get();
         } catch (final InterruptedException e) {
@@ -230,6 +261,18 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         } catch (final ExecutionException e) {
             throw new RuntimeException("Failed to contact delivery admin", e);
         }
+    }
+
+    private static String errorMessage(final String rawBody, final int status) {
+        try {
+            final JsonObject body = new JsonObject(rawBody);
+            if (body.getString("error") != null) {
+                return body.getString("error");
+            }
+        } catch (final RuntimeException ignored) {
+            // fall through
+        }
+        return "delivery-service returned status " + status;
     }
 
     private static boolean isApproved(final JsonObject reply) {
@@ -261,6 +304,12 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         if ("BAD_REQUEST".equals(errorType)) {
             return 400;
         }
+        if ("UNAUTHORIZED".equals(errorType)) {
+            return 401;
+        }
+        if ("FORBIDDEN".equals(errorType)) {
+            return 403;
+        }
         return 500;
     }
 
@@ -271,12 +320,24 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
         if ("NOT_FOUND".equals(errorType)) {
             return 404;
         }
+        if ("UNAUTHORIZED".equals(errorType)) {
+            return 401;
+        }
+        if ("FORBIDDEN".equals(errorType)) {
+            return 403;
+        }
         return 500;
     }
 
     private static int mapTrackStatus(final String errorType) {
         if ("NOT_FOUND".equals(errorType)) {
             return 404;
+        }
+        if ("UNAUTHORIZED".equals(errorType)) {
+            return 401;
+        }
+        if ("FORBIDDEN".equals(errorType)) {
+            return 403;
         }
         return 500;
     }

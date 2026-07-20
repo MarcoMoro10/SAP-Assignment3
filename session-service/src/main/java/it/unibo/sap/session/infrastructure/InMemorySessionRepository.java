@@ -1,9 +1,9 @@
-package it.unibo.sap.gateway.infrastructure;
+package it.unibo.sap.session.infrastructure;
 
 import it.unibo.sap.common.hexagonal.OutputAdapter;
-import it.unibo.sap.gateway.application.SessionRepository;
-import it.unibo.sap.gateway.domain.Session;
-import it.unibo.sap.gateway.domain.SessionId;
+import it.unibo.sap.session.application.SessionRepository;
+import it.unibo.sap.session.domain.Session;
+import it.unibo.sap.session.domain.SessionId;
 
 import java.util.ArrayList;
 import java.util.List;

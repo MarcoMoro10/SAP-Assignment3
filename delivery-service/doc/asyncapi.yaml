@@ -380,18 +380,23 @@ components:
       allOf:
         - $ref: '#/components/schemas/RequestRef'
         - type: object
-          required: [senderId]
+          required: [sessionId]
           properties:
-            senderId:
+            sessionId:
               type: string
-              description: Owner of the delivery, for the ownership check.
+              description: >-
+                Opaque session id of the caller. The delivery-service introspects it against the
+                session-service to authorize the command and derive the owner (STEP 5/6). Channel
+                names are unchanged; only the payload field changed from senderId to sessionId.
 
     CreateDeliveryRequest:
       type: object
-      required: [requestId, senderId, weight, startingPlace, destinationPlace, deadlineMinutes]
+      required: [requestId, sessionId, weight, startingPlace, destinationPlace, deadlineMinutes]
       properties:
         requestId: { type: string }
-        senderId: { type: string }
+        sessionId:
+          type: string
+          description: Opaque session id of the caller; introspected to authorize and derive the owner.
         weight:
           type: number
           description: Package weight in kilograms

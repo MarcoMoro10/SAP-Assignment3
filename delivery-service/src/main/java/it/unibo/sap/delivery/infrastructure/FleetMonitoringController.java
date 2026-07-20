@@ -15,19 +15,31 @@ import java.util.List;
 
 public class FleetMonitoringController extends AbstractVerticle implements InputAdapter {
 
+    private static final String ROLE_ADMIN = "ADMIN";
+
     private final DeliveryService deliveryService;
+    private final RequestAuthorizer authorizer;
     private final int port;
 
-    public FleetMonitoringController(final DeliveryService deliveryService, final int port) {
+    public FleetMonitoringController(final DeliveryService deliveryService,
+                                     final RequestAuthorizer authorizer, final int port) {
         this.deliveryService = deliveryService;
+        this.authorizer = authorizer;
         this.port = port;
     }
 
     @Override
     public void start(final Promise<Void> startPromise) {
         final Router router = Router.router(vertx);
-        router.get("/api/v1/admin/fleet").handler(this::handleViewFleet);
-        router.get("/api/v1/admin/scheduling").handler(this::handleViewScheduling);
+        // ADMIN role gate. requireRole introspects (blocking) so it runs as a blockingHandler.
+        // TRANSITIONAL (STEP 5): missing X-Session-Id => legacy pass-through (the gateway does not
+        // yet propagate identity on admin routes); STEP 6 makes it strict.
+        router.get("/api/v1/admin/fleet")
+                .blockingHandler(authorizer.requireRole(ROLE_ADMIN))
+                .handler(this::handleViewFleet);
+        router.get("/api/v1/admin/scheduling")
+                .blockingHandler(authorizer.requireRole(ROLE_ADMIN))
+                .handler(this::handleViewScheduling);
 
         vertx.createHttpServer()
                 .requestHandler(router)

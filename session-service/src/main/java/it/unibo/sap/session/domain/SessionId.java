@@ -1,4 +1,4 @@
-package it.unibo.sap.gateway.domain;
+package it.unibo.sap.session.domain;
 
 import it.unibo.sap.common.ddd.Identifier;
 

@@ -37,6 +37,27 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 2
             failureThreshold: 3
+          volumeMounts:
+            - name: account-data
+              mountPath: /project/data
+      volumes:
+        - name: account-data
+          persistentVolumeClaim:
+            claimName: account-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: account-data
+  namespace: shipping-on-the-air
+  labels:
+    app: account-service
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 128Mi
 ---
 apiVersion: v1
 kind: Service

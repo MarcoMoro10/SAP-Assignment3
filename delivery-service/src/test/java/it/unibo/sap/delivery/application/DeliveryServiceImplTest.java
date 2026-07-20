@@ -3,6 +3,7 @@ package it.unibo.sap.delivery.application;
 import it.unibo.sap.delivery.application.DeliveryExceptions.BadRequestException;
 import it.unibo.sap.delivery.application.DeliveryExceptions.CannotCancelInFlightException;
 import it.unibo.sap.delivery.application.DeliveryExceptions.DeliveryNotFoundException;
+import it.unibo.sap.delivery.application.DeliveryExceptions.ForbiddenDeliveryAccessException;
 import it.unibo.sap.delivery.application.DeliveryExceptions.ValidationRejectedException;
 import it.unibo.sap.delivery.domain.deliveries.DeliveryId;
 import it.unibo.sap.delivery.domain.deliveries.DeliveryStatus;
@@ -90,6 +91,21 @@ class DeliveryServiceImplTest {
         final CreateDeliveryResult result = service.createDelivery(immediate("user-1", 2.0));
         assertTrue(service.getDelivery(result.deliveryId(), "user-1").isPresent());
         assertFalse(service.getDelivery(result.deliveryId(), "intruder").isPresent());
+    }
+
+    @Test
+    void cancellingSomeoneElsesDeliveryIsForbidden() {
+        final CreateDeliveryResult result = service.createDelivery(immediate("user-1", 2.0));
+        final ForbiddenDeliveryAccessException ex = assertThrows(ForbiddenDeliveryAccessException.class,
+                () -> service.cancelDelivery(result.deliveryId(), "intruder"));
+        assertEquals("You can only cancel your own delivery", ex.getMessage());
+    }
+
+    @Test
+    void trackingSomeoneElsesDeliveryIsHiddenAsNotFound() {
+        final CreateDeliveryResult result = service.createDelivery(immediate("user-1", 2.0));
+        assertThrows(DeliveryNotFoundException.class,
+                () -> service.startTracking(result.deliveryId(), "intruder"));
     }
 
     @Test

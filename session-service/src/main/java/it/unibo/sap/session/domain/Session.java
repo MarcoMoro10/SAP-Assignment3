@@ -1,8 +1,8 @@
-package it.unibo.sap.gateway.domain;
+package it.unibo.sap.session.domain;
 
 import it.unibo.sap.common.ddd.AggregateRoot;
 import it.unibo.sap.common.ddd.DomainEvent;
-import it.unibo.sap.gateway.domain.events.SessionCreated;
+import it.unibo.sap.session.domain.events.SessionCreated;
 
 import java.time.Instant;
 import java.util.ArrayList;

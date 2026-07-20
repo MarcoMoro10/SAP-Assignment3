@@ -1,7 +1,7 @@
-package it.unibo.sap.gateway.domain.events;
+package it.unibo.sap.session.domain.events;
 
 import it.unibo.sap.common.ddd.DomainEvent;
-import it.unibo.sap.gateway.domain.SessionId;
+import it.unibo.sap.session.domain.SessionId;
 
 import java.time.Instant;
 
