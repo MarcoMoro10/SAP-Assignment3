@@ -15,7 +15,7 @@ public class SessionServiceProxy implements OutputAdapter {
     private static final String SESSIONS_PATH = "/api/v1/user-sessions/";
 
     private static final long HEALTH_TIMEOUT_MS = 2000;
-    private static final long INTROSPECT_TIMEOUT_MS = 2000;   // WS auth must be snappy; the timeout is the defense
+    private static final long INTROSPECT_TIMEOUT_MS = 2000;
     private static final long LOGIN_TIMEOUT_MS = 10_000;
 
     private final WebClient webClient;
