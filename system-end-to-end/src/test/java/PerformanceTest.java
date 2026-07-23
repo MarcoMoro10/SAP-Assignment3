@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * QA scenario — THROUGHPUT (SLI-2). Manda un carico di richieste di DOMINIO (login) al gateway, ognuna
  * su un proprio virtual thread, e misura il throughput come DELTA di {@code rest_requests} diviso la
  * finestra temporale del carico. Deve superare i 40 req/s (SLO-2). Le probe di health sono escluse da
- * {@code rest_requests} (STEP 7), quindi il carico deve colpire un endpoint di dominio (non /health/live).
+ * {@code rest_requests}, quindi il carico deve colpire un endpoint di dominio (non /health/live).
  */
 class PerformanceTest {
 

@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Lancia un batch di richieste di DOMINIO che hanno SUCCESSO end-to-end (login valido -> 200) e verifica
  * il rapporto sul DELTA prodotto da questo carico (i contatori del gateway sono cumulativi dall'avvio, e
  * altri test possono aver introdotto 4xx: si misura la finestra). Le probe di health sono escluse dagli
- * SLI (STEP 7), quindi non falsano il rapporto.
+ * SLI, quindi non falsano il rapporto.
  */
 class AvailabilityTest {
 

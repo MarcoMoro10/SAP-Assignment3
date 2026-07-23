@@ -53,8 +53,6 @@ class DeliveryRecoveryServiceTest {
     @TempDir
     Path tempDir;
 
-    // Stop every FleetModule we start, or the DroneAgent worker threads leak and later tests hit
-    // RejectedExecutionException (see A3 commit 931b2c3).
     private final List<FleetModule> startedFleets = new ArrayList<>();
 
     @AfterEach
@@ -174,7 +172,6 @@ class DeliveryRecoveryServiceTest {
         restart().recover();
         final int eventsAfterFirst = storeFromFile().load(id).size();
 
-        // second restart: fresh store from the same file, fresh fleet — must not cancel twice
         restart().recover();
         final int eventsAfterSecond = storeFromFile().load(id).size();
 
@@ -223,7 +220,7 @@ class DeliveryRecoveryServiceTest {
         final ByteArrayOutputStream capturedErr = new ByteArrayOutputStream();
         System.setErr(new PrintStream(capturedErr, true, StandardCharsets.UTF_8));
         try {
-            new DeliveryRecoveryService(base.repository(), faulty).recover();  // must not propagate
+            new DeliveryRecoveryService(base.repository(), faulty).recover();
         } finally {
             System.setErr(originalErr);
         }

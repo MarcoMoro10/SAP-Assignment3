@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Authorization of the gateway tracking WebSocket (STEP 6). The gateway is the only point that sees
+ * Authorization of the gateway tracking WebSocket. The gateway is the only point that sees
  * the WS handshake (the stream never crosses Kafka), so it authorizes the OWNER there, at the upgrade,
  * before any relay channel is opened. The owner of a tracking session is seeded deterministically (the
  * real capture path via {@code trackDelivery} is covered by {@link DeliveryServiceProxyIntegrationTest});

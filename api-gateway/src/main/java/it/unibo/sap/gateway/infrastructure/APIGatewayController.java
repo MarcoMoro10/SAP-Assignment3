@@ -23,9 +23,7 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
     private static final String TRACK_PREFIX = "/api/v1/track/";
 
     private final AccountService accountServiceProxy;
-    // Concreto: il controller usa il bridge di tracking (deliveryIdFor/ownerFor/createAnEventChannel/forgetTrackingSession), che espone tipi di infrastructure fuori dalla porta.
     private final DeliveryServiceProxy deliveryServiceProxy;
-    // Concreto: il controller invoca introspect(), tenuto fuori dalla porta per non spostare ValidatedCaller in application.
     private final SessionServiceProxy sessionServiceProxy;
     private final String publicHost;
     private final int port;

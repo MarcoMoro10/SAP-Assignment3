@@ -31,9 +31,6 @@ public class FleetMonitoringController extends AbstractVerticle implements Input
     @Override
     public void start(final Promise<Void> startPromise) {
         final Router router = Router.router(vertx);
-        // ADMIN role gate. requireRole introspects (blocking) so it runs as a blockingHandler.
-        // TRANSITIONAL (STEP 5): missing X-Session-Id => legacy pass-through (the gateway does not
-        // yet propagate identity on admin routes); STEP 6 makes it strict.
         router.get("/api/v1/admin/fleet")
                 .blockingHandler(authorizer.requireRole(ROLE_ADMIN))
                 .handler(this::handleViewFleet);
