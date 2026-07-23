@@ -6,11 +6,12 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import it.unibo.sap.common.hexagonal.OutputAdapter;
+import it.unibo.sap.gateway.application.SessionService;
 
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
-public class SessionServiceProxy implements OutputAdapter {
+public class SessionServiceProxy implements SessionService, OutputAdapter {
 
     private static final String SESSIONS_PATH = "/api/v1/user-sessions/";
 
@@ -28,6 +29,7 @@ public class SessionServiceProxy implements OutputAdapter {
         this.port = port;
     }
 
+    @Override
     public Future<Boolean> pingHealth() {
         return webClient.get(port, host, "/api/v1/health")
                 .timeout(HEALTH_TIMEOUT_MS)
@@ -36,6 +38,7 @@ public class SessionServiceProxy implements OutputAdapter {
                 .otherwise(false);
     }
 
+    @Override
     public JsonObject login(final String username, final String password) {
         final CompletableFuture<JsonObject> future = new CompletableFuture<>();
         final JsonObject body = new JsonObject().put("username", username).put("password", password);

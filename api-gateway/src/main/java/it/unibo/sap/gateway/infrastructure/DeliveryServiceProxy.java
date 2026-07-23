@@ -31,7 +31,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
     private static final String CH_GET_DETAIL_REQUESTS = "get-delivery-detail-requests";
     private static final String CH_CANCEL_REQUESTS = "cancel-delivery-requests";
     private static final String CH_TRACK_REQUESTS = "delivery-tracking-requests";
-    private static final String CH_STOP_TRACKING_REQUESTS = "stop-tracking-requests";
 
     private static final long HEALTH_TIMEOUT_MS = 2000;
     private static final long ADMIN_TIMEOUT_MS = 10_000;
@@ -69,6 +68,7 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
 
     public record TrackedDelivery(String deliveryId, String ownerAccountId) { }
 
+    @Override
     public Future<Boolean> pingHealth() {
         return webClient.get(port, host, "/api/v1/health")
                 .timeout(HEALTH_TIMEOUT_MS).send()
@@ -126,16 +126,6 @@ public class DeliveryServiceProxy implements DeliveryService, OutputAdapter {
             return body.put("_statusCode", 201);
         }
         return rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
-    }
-
-    public JsonObject stopTracking(final String deliveryId, final String sessionId) {
-        final JsonObject reply = requestReply(CH_STOP_TRACKING_REQUESTS,
-                dyn("stop-tracking-", deliveryId, "-requests-approved"),
-                dyn("stop-tracking-", deliveryId, "-requests-rejected"),
-                new JsonObject().put("deliveryId", deliveryId).put("sessionId", sessionId));
-        return isApproved(reply)
-                ? clean(reply).put("_statusCode", 200)
-                : rejectedBody(reply, mapTrackStatus(reply.getString("errorType")));
     }
 
     @Override

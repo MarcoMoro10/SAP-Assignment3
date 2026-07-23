@@ -1,5 +1,6 @@
 package it.unibo.sap.gateway.support;
 
+import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import it.unibo.sap.gateway.application.AccountService;
 
@@ -15,5 +16,10 @@ public final class FakeAccountService implements AccountService {
     @Override
     public JsonObject register(final String username, final String password) {
         return registerResult;
+    }
+
+    @Override
+    public Future<Boolean> pingHealth() {
+        return Future.succeededFuture(true);
     }
 }

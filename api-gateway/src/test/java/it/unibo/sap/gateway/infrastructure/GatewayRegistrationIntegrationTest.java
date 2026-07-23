@@ -5,6 +5,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
+import it.unibo.sap.gateway.application.AccountService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -76,7 +77,7 @@ class GatewayRegistrationIntegrationTest {
 
     private static void startGateway() {
         final WebClient gatewayClient = WebClient.create(vertx);
-        final AccountServiceProxy accountProxy =
+        final AccountService accountProxy =
                 new AccountServiceProxy(gatewayClient, HOST, ACCOUNT_STUB_PORT);
         final SessionServiceProxy sessionProxy =
                 new SessionServiceProxy(gatewayClient, HOST, ACCOUNT_STUB_PORT);

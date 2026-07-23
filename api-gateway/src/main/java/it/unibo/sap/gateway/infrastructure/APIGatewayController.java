@@ -11,6 +11,7 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import it.unibo.sap.common.hexagonal.InputAdapter;
+import it.unibo.sap.gateway.application.AccountService;
 import it.unibo.sap.gateway.application.ControllerObserver;
 import it.unibo.sap.gateway.kafka.InputEventChannel;
 
@@ -21,14 +22,16 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
 
     private static final String TRACK_PREFIX = "/api/v1/track/";
 
-    private final AccountServiceProxy accountServiceProxy;
+    private final AccountService accountServiceProxy;
+    // Concreto: il controller usa il bridge di tracking (deliveryIdFor/ownerFor/createAnEventChannel/forgetTrackingSession), che espone tipi di infrastructure fuori dalla porta.
     private final DeliveryServiceProxy deliveryServiceProxy;
+    // Concreto: il controller invoca introspect(), tenuto fuori dalla porta per non spostare ValidatedCaller in application.
     private final SessionServiceProxy sessionServiceProxy;
     private final String publicHost;
     private final int port;
     private final ControllerObserver observer;
 
-    public APIGatewayController(final AccountServiceProxy accountServiceProxy,
+    public APIGatewayController(final AccountService accountServiceProxy,
                                 final DeliveryServiceProxy deliveryServiceProxy,
                                 final SessionServiceProxy sessionServiceProxy,
                                 final String publicHost,
@@ -37,7 +40,7 @@ public class APIGatewayController extends AbstractVerticle implements InputAdapt
                 ControllerObserver.NO_OP);
     }
 
-    public APIGatewayController(final AccountServiceProxy accountServiceProxy,
+    public APIGatewayController(final AccountService accountServiceProxy,
                                 final DeliveryServiceProxy deliveryServiceProxy,
                                 final SessionServiceProxy sessionServiceProxy,
                                 final String publicHost,
